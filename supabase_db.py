@@ -17,6 +17,7 @@ class SupabaseDB:
         if not all([SUPABASE_URL, SUPABASE_KEY]):
             raise ConnectionError("Supabase URL or Key is not set in config.py.")
         try:
+            print("Initializing Supabase client with:", SUPABASE_URL, SUPABASE_KEY)
             self.client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
         except Exception as e:
             raise ConnectionError(f"Failed to initialize Supabase client: {e}") from e
