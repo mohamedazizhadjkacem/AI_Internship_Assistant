@@ -4,22 +4,35 @@ from datetime import datetime, timedelta, timezone
 from supabase import create_client, Client
 import time
 import re
+import streamlit as st
 
+# Try to import from config, fallback to environment variables or Streamlit secrets
 try:
     from config import SUPABASE_URL, SUPABASE_KEY
 except ImportError:
-    SUPABASE_URL, SUPABASE_KEY = None, None
+    # Try Streamlit secrets first, then environment variables
+    try:
+        SUPABASE_URL = st.secrets.get("SUPABASE_URL") or os.getenv("SUPABASE_URL")
+        SUPABASE_KEY = st.secrets.get("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY")
+    except:
+        # If Streamlit secrets fail, try environment variables
+        SUPABASE_URL = os.getenv("SUPABASE_URL")
+        SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY")
 
 class SupabaseDB:
     """A class to manage all interactions with the Supabase database."""
     def __init__(self):
         """Initializes the Supabase client."""
         if not all([SUPABASE_URL, SUPABASE_KEY]):
-            raise ConnectionError("Supabase URL or Key is not set in config.py.")
+            raise ConnectionError("Supabase URL or Key is not set. Check your config.py, environment variables, or Streamlit secrets.")
+        
         try:
-            print("Initializing Supabase client with:", SUPABASE_URL, SUPABASE_KEY)
+            print(f"Initializing Supabase client with URL: {SUPABASE_URL}")
+            # Simple initialization without any additional parameters
             self.client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+            print("Supabase client initialized successfully")
         except Exception as e:
+            print(f"Supabase initialization error: {str(e)}")
             raise ConnectionError(f"Failed to initialize Supabase client: {e}") from e
 
     def sign_up_user(self, email, password, username, telegram_bot_token=None, telegram_chat_id=None):
@@ -255,4 +268,3 @@ class SupabaseDB:
         except Exception as e:
             print(f"Error updating Telegram config: {e}")
             return False
-
