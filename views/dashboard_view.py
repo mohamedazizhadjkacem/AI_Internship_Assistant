@@ -11,6 +11,11 @@ def parse_date(date_str):
     except (ValueError, TypeError):
         return datetime.min
 
+def force_internships_refresh():
+    """Helper function to force refresh of internships data"""
+    st.session_state.all_internships = None
+    st.session_state['force_refresh'] = True
+
 # Status configurations for consistent UI
 STATUS_INFO = {
     'New': {'color': 'blue', 'emoji': '✨'},
@@ -46,15 +51,8 @@ def show_dashboard_page():
         
     user_id = st.session_state.get('user_id')
     
-    # Load internships if needed
-    if not st.session_state.all_internships:
-        if user_id:
-            db = SupabaseDB()
-            internships = db.get_internships_by_user(user_id)
-            if internships is not None:
-                st.session_state.all_internships = internships
-    
-    all_internships = st.session_state.all_internships
+    # Get internships from session state (loaded by centralized loader in app.py)
+    all_internships = st.session_state.get('all_internships', [])
 
     # Display Statistics with emojis
     st.markdown("### 📈 Overview")

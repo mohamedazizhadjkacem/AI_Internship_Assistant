@@ -9,6 +9,44 @@ from notifications import send_telegram_notification
 from config import SCRAPING_INTERVAL_MINUTES
 
 
+def process_and_save_search_results(result, user_id, all_internships):
+    """Helper function to process and save search results"""
+    existing_links = {internship['application_link'] for internship in all_internships}
+    
+    print(f"[DEBUG] Found {len(all_internships)} existing internships in session state")
+    print(f"[DEBUG] Existing links: {list(existing_links)[:5]}...")  # Show first 5 links
+    print(f"[DEBUG] Processing {len(result)} scraped internships")
+    
+    db = SupabaseDB()
+    new_internships_count = 0
+    duplicate_count = 0
+    
+    for i, internship in enumerate(result):
+        link = internship["application_link"]
+        print(f"[DEBUG] Scraped internship {i+1}: {internship.get('job_title', 'Unknown')} at {internship.get('company_name', 'Unknown')}")
+        print(f"[DEBUG] Scraped link: {link}")
+        if link not in existing_links:
+            save_data = {
+                **internship,
+                "status": "new",
+            }
+            print(f"[DEBUG] Attempting to save internship: {internship.get('job_title', 'Unknown')} at {internship.get('company_name', 'Unknown')}")
+            resp = db.add_internship(user_id, save_data)
+            print(f"[DEBUG] Save response: {resp}")
+            if resp.get("success"):
+                new_internships_count += 1
+                print(f"[DEBUG] Successfully saved internship {new_internships_count}")
+            elif resp.get("error") == "duplicate":
+                duplicate_count += 1
+                print(f"[DEBUG] Duplicate internship detected")
+            else:
+                print(f"[DEBUG] Failed to save internship: {resp}")
+        else:
+            print(f"[DEBUG] Skipping existing internship: {internship.get('job_title', 'Unknown')}")
+    
+    return new_internships_count, duplicate_count
+
+
 def continuous_scraping(job_title, location, user_id):
     """Background task to continuously scrape LinkedIn for new internships."""
     db = SupabaseDB()
@@ -23,6 +61,9 @@ def continuous_scraping(job_title, location, user_id):
             # Get current internships from database
             all_internships = db.get_internships_by_user(user_id)
             existing_links = {internship['application_link'] for internship in all_internships}
+            
+            print(f"[DEBUG] Continuous: Found {len(all_internships) if all_internships else 0} existing internships in database")
+            print(f"[DEBUG] Continuous: Existing links: {list(existing_links)[:3]}...")  # Show first 3 links
 
             # Scrape LinkedIn
             result = scrape_linkedin(job_title, location, True)  # Only last 24h
@@ -32,14 +73,22 @@ def continuous_scraping(job_title, location, user_id):
                 new_internships = []
                 for internship in result:
                     link = internship["application_link"]
+                    print(f"[DEBUG] Continuous: Checking scraped link: {link}")
                     if link not in existing_links:
                         save_data = {
                             **internship,
                             "status": "new",
                         }
+                        print(f"[DEBUG] Continuous: Attempting to save internship: {internship.get('job_title', 'Unknown')} at {internship.get('company_name', 'Unknown')}")
                         resp = db.add_internship(user_id, save_data)
+                        print(f"[DEBUG] Continuous: Save response: {resp}")
                         if resp.get("success"):
                             new_internships.append(internship)
+                            print(f"[DEBUG] Continuous: Successfully saved internship")
+                        else:
+                            print(f"[DEBUG] Continuous: Failed to save internship: {resp}")
+                    else:
+                        print(f"[DEBUG] Continuous: Skipping existing internship: {internship.get('job_title', 'Unknown')}")
                 print(f"[DEBUG] Found {len(new_internships)} new internships for user {user_id}.")
 
                 # Send notification if new internships found
@@ -98,7 +147,7 @@ def show_scraper_page():
         with col1:
             job_title = st.text_input("Job Title", placeholder="e.g. Software Engineer Intern", key="scraper_job_title")
         with col2:
-            location = st.text_input("Location", placeholder="e.g. United States", value="United States", key="scraper_location")
+            location = st.text_input("Location", placeholder="e.g. Canada", key="scraper_location")
         with col3:
             last_24_hours = st.checkbox("Last 24h only", key="scraper_last24")
 
@@ -109,12 +158,14 @@ def show_scraper_page():
         st.session_state['last_job_title'] = job_title
     if location:
         st.session_state['last_location'] = location
+    else:
+        # If location is empty, set default
+        if location == '':
+            st.session_state['last_location'] = 'United States'
 
     # Continuous Search Controls
     user_id = st.session_state.get('user_id')
-    # Use session state for job_title/location for continuous search
-    last_job_title = st.session_state.get('last_job_title', '')
-    last_location = st.session_state.get('last_location', 'United States')
+    
     if user_id:
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -122,55 +173,61 @@ def show_scraper_page():
         with col2:
             if not st.session_state.continuous_search_active:
                 if st.button("Start Continuous Search", type="primary", use_container_width=True):
-                    if not last_job_title:
+                    # Get current form values directly (they should be available here)
+                    current_job_title = job_title.strip() if job_title else ''
+                    current_location = location.strip() if location else 'United States'
+                    current_last_24h = last_24_hours if 'last_24_hours' in locals() else True
+                    
+                    print(f"[DEBUG] Direct form values - job_title: '{current_job_title}', location: '{current_location}'")
+                    
+                    if not current_job_title:
                         st.error("Please enter a job title first (in the form above).")
+                        st.info("💡 **Tip**: Make sure to type a job title in the 'Job Title' field above, then click this button.")
                     else:
-                        # --- Run a manual search first (same as 'Search' button) ---
-                        with st.spinner("Scraping LinkedIn. Please wait..."):
-                            result = scrape_linkedin(last_job_title, last_location, last_24_hours)
-
-                        if isinstance(result, dict) and result.get("error"):
-                            st.error(result["error"])
-                            return
-
-                        if not result:
-                            st.warning("No internships found. Try adjusting your search criteria.")
-                        else:
-                            # --- Process and Save Results ---
-                            all_internships = st.session_state.get('all_internships', [])
-                            existing_links = {internship['application_link'] for internship in all_internships}
-                            db = SupabaseDB()
-                            new_internships_count = 0
-                            duplicate_count = 0
-                            for internship in result:
-                                link = internship["application_link"]
-                                if link not in existing_links:
-                                    save_data = {
-                                        **internship,
-                                        "status": "new",
-                                    }
-                                    resp = db.add_internship(user_id, save_data)
-                                    if resp.get("success"):
-                                        new_internships_count += 1
-                                    elif resp.get("error") == "duplicate":
-                                        duplicate_count += 1
-                            st.session_state.all_internships = None
-                            if new_internships_count > 0:
-                                st.success(f"✨ Added {new_internships_count} new internships! Check your dashboard to review them.")
+                        # First, perform the search automatically (simulate clicking Search button)
+                        with st.spinner("Performing initial search..."):
+                            # Perform the scraping first
+                            result = scrape_linkedin(current_job_title, current_location, current_last_24h)
+                            
+                            # Check for errors (result is a dict with "error" key)
+                            if isinstance(result, dict) and result.get("error"):
+                                st.error(result["error"])
+                                return
+                            
+                            # Check if we got results (result is a list of internships)
+                            if not result:
+                                st.warning("No internships found. Try adjusting your search criteria.")
                             else:
-                                if duplicate_count > 0:
-                                    st.info("All found internships were already in your dashboard.")
+                                # Get current internships to check for duplicates
+                                all_internships = st.session_state.get('all_internships', [])
+                                
+                                # Process and save the results
+                                new_internships, duplicate_internships = process_and_save_search_results(
+                                    result, user_id, all_internships
+                                )
+                                
+                                if new_internships > 0 or duplicate_internships > 0:
+                                    st.success(f"✅ Found {new_internships} new internships and {duplicate_internships} duplicates!")
+                                    # Force refresh the data to show new results
+                                    st.session_state.force_refresh = True
                                 else:
-                                    st.warning("No new internships were found to add.")
-                        # --- Start continuous search in background ---
+                                    st.info("No new internships found in this search.")
+                        
+                        # Then start continuous search
+                        st.session_state.continuous_search_active = True
+                        st.session_state.last_job_title = current_job_title
+                        st.session_state.last_location = current_location
+                        
+                        # Start the background thread for continuous searching
                         search_thread = threading.Thread(
                             target=continuous_scraping,
-                            args=(last_job_title, last_location, user_id),
+                            args=(current_job_title, current_location, user_id),
                             daemon=True
                         )
                         search_thread.start()
                         st.session_state.search_thread = search_thread
-                        st.session_state.continuous_search_active = True
+                        
+                        st.success(f"🔄 Continuous search started! Searching for '{current_job_title}' in '{current_location}' every {SCRAPING_INTERVAL_MINUTES} minutes.")
                         st.rerun()
             else:
                 if st.button("Stop Continuous Search", type="secondary", use_container_width=True):
@@ -181,6 +238,15 @@ def show_scraper_page():
     # Show continuous search status
     if st.session_state.continuous_search_active:
         st.success("🔄 Continuous search is active. You'll receive Telegram notifications for new internships.")
+
+    # Check if we need to trigger a search (from continuous search button)
+    if st.session_state.get('trigger_search', False):
+        submitted = True
+        job_title = st.session_state.get('search_job_title', '')
+        location = st.session_state.get('search_location', 'Canada')
+        last_24_hours = st.session_state.get('search_last_24h', False)
+        # Clear the trigger flag
+        st.session_state.trigger_search = False
 
     if submitted:
         if not job_title:
@@ -204,28 +270,13 @@ def show_scraper_page():
         # --- Process and Save Results ---
         user_id = st.session_state.get("user_id")
         all_internships = st.session_state.get('all_internships', [])
-        existing_links = {internship['application_link'] for internship in all_internships}
-
-        db = SupabaseDB()
-        new_internships_count = 0
-        duplicate_count = 0
 
         with st.spinner("Processing and saving new internships..."):
-            for internship in result:
-                link = internship["application_link"]
-                if link not in existing_links:
-                    save_data = {
-                        **internship,
-                        "status": "new",
-                    }
-                    resp = db.add_internship(user_id, save_data)
-                    if resp.get("success"):
-                        new_internships_count += 1
-                    elif resp.get("error") == "duplicate":
-                        duplicate_count += 1
+            new_internships_count, duplicate_count = process_and_save_search_results(result, user_id, all_internships)
 
         # Clear the session state to force a refresh of internships
         st.session_state.all_internships = None
+        st.session_state['force_refresh'] = True  # Add explicit refresh flag
 
         # Show results summary
         if new_internships_count > 0:
@@ -235,3 +286,18 @@ def show_scraper_page():
                 st.info("All found internships were already in your dashboard.")
             else:
                 st.warning("No new internships were found to add.")
+        
+        # Check if we need to start continuous search after this search
+        if st.session_state.get('start_continuous_after_search', False):
+            st.session_state.start_continuous_after_search = False
+            # Start continuous search in background
+            search_thread = threading.Thread(
+                target=continuous_scraping,
+                args=(job_title, location, user_id),
+                daemon=True
+            )
+            search_thread.start()
+            st.session_state.search_thread = search_thread
+            st.session_state.continuous_search_active = True
+            st.success("🔄 Continuous search started! You'll receive notifications for new internships.")
+            st.rerun()

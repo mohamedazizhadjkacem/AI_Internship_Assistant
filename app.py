@@ -42,7 +42,8 @@ defaults = {
     'show_descriptions': {},
     'continuous_search_active': False,
     'search_thread': None,
-    'delete_success': False  # Add this for delete confirmation handling
+    'delete_success': False,  # Add this for delete confirmation handling
+    'force_refresh': False  # Flag to force data refresh
 }
 
 # Initialize any missing session state variables with defaults
@@ -159,24 +160,23 @@ else:
 
     # --- CENTRALIZED DATA LOADER ---            # This ensures that the main internship data is always loaded and consistent
     def ensure_data_loaded():
-        with st.spinner("Loading internships..."):
-            # Always initialize all_internships as an empty list if it doesn't exist
-            if 'all_internships' not in st.session_state:
-                st.session_state['all_internships'] = []
-            elif st.session_state.get('all_internships') is None:
-                st.session_state['all_internships'] = []
+        """Loads internships from database if needed."""
+        # Always initialize all_internships as an empty list if it doesn't exist or is None
+        if 'all_internships' not in st.session_state or st.session_state.get('all_internships') is None:
+            st.session_state['all_internships'] = []
 
-            current_internships = st.session_state.get('all_internships', [])
+        current_internships = st.session_state.get('all_internships', [])
+        
+        # Load internships if user is logged in and list is empty
+        if st.session_state.get('logged_in') and not current_internships:
+            user_id = st.session_state.get('user_id')
             
-            # Only attempt load if user is logged in and internships need refresh
-            if st.session_state.get('logged_in') and not current_internships:
-                user_id = st.session_state.get('user_id')
-                
-                if not user_id:
-                    st.error("No user ID found in session. Please try logging in again.")
-                    return False
+            if not user_id:
+                st.error("No user ID found in session. Please try logging in again.")
+                return False
 
-                try:
+            try:
+                with st.spinner("Loading internships..."):
                     internships = db.get_internships_by_user(user_id)
                     
                     # Ensure internships is always a list
@@ -186,14 +186,25 @@ else:
                         internships = list(internships) if hasattr(internships, '__iter__') else []
                     
                     st.session_state['all_internships'] = internships
+                    print(f"[DEBUG] Loaded {len(internships)} internships for user {user_id}")
                     return True
-                except Exception as e:
-                    st.error("Error loading internships. Please try again.")
-                    st.session_state.all_internships = []
-                    return False
+            except Exception as e:
+                st.error(f"Error loading internships: {str(e)}")
+                st.session_state.all_internships = []
+                return False
+        return True
 
-    # Load data when needed
-    if st.session_state.view == 'Dashboard' or not st.session_state.get('all_internships'):
+    # Load data when needed - always check for Dashboard, when data is missing/None, or when explicit refresh is requested
+    if (st.session_state.view == 'Dashboard' or 
+        not st.session_state.get('all_internships') or 
+        st.session_state.get('all_internships') is None or 
+        st.session_state.get('force_refresh', False)):
+        
+        # Clear the force refresh flag
+        if st.session_state.get('force_refresh', False):
+            st.session_state['force_refresh'] = False
+            st.session_state['all_internships'] = None  # Ensure data is reloaded
+            
         ensure_data_loaded()
 
     # --- RENDER SELECTED PAGE ---

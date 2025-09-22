@@ -143,12 +143,28 @@ class SupabaseDB:
         """Adds a new internship record for a specific user."""
         try:
             job_data['user_id'] = user_id
-            data, count = self.client.table('internships').insert(job_data).execute()
-            if data and len(data[1]) > 0:
-                return {'success': True, 'data': data[1][0], 'is_new': True}
+            print(f"[DEBUG] add_internship: Inserting internship for user {user_id}: {job_data.get('job_title', 'Unknown')} at {job_data.get('company_name', 'Unknown')}")
+            
+            # Execute the insert
+            response = self.client.table('internships').insert(job_data).execute()
+            print(f"[DEBUG] add_internship: Raw response type: {type(response)}")
+            print(f"[DEBUG] add_internship: Raw response: {response}")
+            
+            # Check if response has data
+            if hasattr(response, 'data') and response.data:
+                print(f"[DEBUG] add_internship: Response data length: {len(response.data)}")
+                if len(response.data) > 0:
+                    print(f"[DEBUG] add_internship: Successfully inserted internship")
+                    return {'success': True, 'data': response.data[0], 'is_new': True}
+                else:
+                    print(f"[DEBUG] add_internship: No data in response")
+                    return {'error': 'Failed to insert data - no records returned.'}
             else:
-                return {'error': 'Failed to insert data.'}
+                print(f"[DEBUG] add_internship: No data attribute in response")
+                return {'error': 'Failed to insert data - invalid response format.'}
+                
         except Exception as e:
+            print(f"[DEBUG] add_internship: Exception occurred: {str(e)}")
             if 'duplicate key value violates unique constraint' in str(e):
                 return {"error": "duplicate", "message": "You have already saved this internship."}
             return {"error": str(e)}

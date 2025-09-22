@@ -64,6 +64,15 @@ Thumbs.db
 # Environment variables
 .env
 .env.*
+.env.local
+.env.production
+.env.staging
+
+# API Keys and sensitive config files
+config_local.py
+*_secrets.py
+api_keys.py
+secrets.py
 
 # Logs
 *.log

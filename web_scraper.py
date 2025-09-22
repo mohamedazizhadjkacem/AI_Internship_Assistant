@@ -10,7 +10,7 @@ import re
 # A real-world, robust scraper would use proxy rotation, more advanced user-agent spoofing,
 # and potentially a headless browser like Selenium.
 
-@st.cache_data(ttl=3600)  # Cache results for 1 hour to avoid re-scraping
+# @st.cache_data(ttl=300)  # Temporarily disabled caching for debugging
 def scrape_linkedin(job_title: str, location: str = "Canada", last_24_hours: bool = False):
     """Scrapes LinkedIn for internship listings.
 
