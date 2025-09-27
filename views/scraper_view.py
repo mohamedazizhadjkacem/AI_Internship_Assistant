@@ -145,106 +145,102 @@ def show_scraper_page():
     with st.form("scraper_form", clear_on_submit=False):
         col1, col2, col3 = st.columns(3)
         with col1:
-            job_title = st.text_input("Job Title", placeholder="e.g. Software Engineer Intern", key="scraper_job_title")
+            job_title = st.text_input("Job Title", placeholder="e.g. Software Engineer Intern", 
+                                    value=st.session_state.get('last_job_title', ''), key="scraper_job_title")
         with col2:
-            location = st.text_input("Location", placeholder="e.g. Canada", key="scraper_location")
+            location = st.text_input("Location (Optional)", placeholder="Leave empty for global search", 
+                                   value=st.session_state.get('last_location', ''), key="scraper_location")
         with col3:
             last_24_hours = st.checkbox("Last 24h only", key="scraper_last24")
 
-        submitted = st.form_submit_button("Search", type="primary")
+        # Form buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            submitted = st.form_submit_button("Search", type="primary", use_container_width=True)
+        with col2:
+            user_id = st.session_state.get('user_id')
+            if user_id and not st.session_state.get('continuous_search_active', False):
+                continuous_search_submitted = st.form_submit_button("Start Continuous Search", type="secondary", use_container_width=True)
+            else:
+                continuous_search_submitted = False
 
     # Always keep the latest job_title and location in session state
     if job_title:
         st.session_state['last_job_title'] = job_title
-    if location:
-        st.session_state['last_location'] = location
-    else:
-        # If location is empty, set default
-        if location == '':
-            st.session_state['last_location'] = 'United States'
-
-    # Continuous Search Controls
-    user_id = st.session_state.get('user_id')
-    
-    if user_id:
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.info(f"Continuous search will check for new internships every {SCRAPING_INTERVAL_MINUTES} minutes.")
-        with col2:
-            if not st.session_state.continuous_search_active:
-                if st.button("Start Continuous Search", type="primary", use_container_width=True):
-                    # Get current form values directly (they should be available here)
-                    current_job_title = job_title.strip() if job_title else ''
-                    current_location = location.strip() if location else 'United States'
-                    current_last_24h = last_24_hours if 'last_24_hours' in locals() else True
-                    
-                    print(f"[DEBUG] Direct form values - job_title: '{current_job_title}', location: '{current_location}'")
-                    
-                    if not current_job_title:
-                        st.error("Please enter a job title first (in the form above).")
-                        st.info("💡 **Tip**: Make sure to type a job title in the 'Job Title' field above, then click this button.")
-                    else:
-                        # First, perform the search automatically (simulate clicking Search button)
-                        with st.spinner("Performing initial search..."):
-                            # Perform the scraping first
-                            result = scrape_linkedin(current_job_title, current_location, current_last_24h)
-                            
-                            # Check for errors (result is a dict with "error" key)
-                            if isinstance(result, dict) and result.get("error"):
-                                st.error(result["error"])
-                                return
-                            
-                            # Check if we got results (result is a list of internships)
-                            if not result:
-                                st.warning("No internships found. Try adjusting your search criteria.")
-                            else:
-                                # Get current internships to check for duplicates
-                                all_internships = st.session_state.get('all_internships', [])
-                                
-                                # Process and save the results
-                                new_internships, duplicate_internships = process_and_save_search_results(
-                                    result, user_id, all_internships
-                                )
-                                
-                                if new_internships > 0 or duplicate_internships > 0:
-                                    st.success(f"✅ Found {new_internships} new internships and {duplicate_internships} duplicates!")
-                                    # Force refresh the data to show new results
-                                    st.session_state.force_refresh = True
-                                else:
-                                    st.info("No new internships found in this search.")
-                        
-                        # Then start continuous search
-                        st.session_state.continuous_search_active = True
-                        st.session_state.last_job_title = current_job_title
-                        st.session_state.last_location = current_location
-                        
-                        # Start the background thread for continuous searching
-                        search_thread = threading.Thread(
-                            target=continuous_scraping,
-                            args=(current_job_title, current_location, user_id),
-                            daemon=True
-                        )
-                        search_thread.start()
-                        st.session_state.search_thread = search_thread
-                        
-                        st.success(f"🔄 Continuous search started! Searching for '{current_job_title}' in '{current_location}' every {SCRAPING_INTERVAL_MINUTES} minutes.")
-                        st.rerun()
-            else:
-                if st.button("Stop Continuous Search", type="secondary", use_container_width=True):
-                    st.session_state.continuous_search_active = False
-                    st.session_state.search_thread = None
-                    st.rerun()
+    # Store location as-is, including empty string for global search
+    st.session_state['last_location'] = location
 
     # Show continuous search status
-    if st.session_state.continuous_search_active:
-        st.success("🔄 Continuous search is active. You'll receive Telegram notifications for new internships.")
+    user_id = st.session_state.get('user_id')
+    if user_id:
+        if st.session_state.get('continuous_search_active', False):
+            search_location = st.session_state.get('last_location', '')
+            location_text = f" in {search_location}" if search_location else " globally"
+            st.success(f"🔄 Continuous search is active! Monitoring for new '{st.session_state.get('last_job_title', 'internships')}' opportunities{location_text} every {SCRAPING_INTERVAL_MINUTES} minutes.")
+        else:
+            st.info(f"ℹ️ Fill in the job title above and optionally specify a location (or leave empty for global search), then click 'Start Continuous Search' to begin automated monitoring every {SCRAPING_INTERVAL_MINUTES} minutes.")
+    # Handle continuous search form submission
+    if continuous_search_submitted:
+        print(f"[DEBUG] Continuous search form values - job_title: '{job_title}', location: '{location}'")
+        
+        if not job_title or job_title.strip() == '':
+            st.error("Please enter a job title to start continuous search.")
+        else:
+            # First, perform the search automatically
+            search_location = location.strip() if location else None
+            location_display = search_location if search_location else "globally"
+            
+            with st.spinner(f"Performing initial search {location_display}..."):
+                # Perform the scraping first - pass None for global search
+                result = scrape_linkedin(job_title, search_location, last_24_hours)
+                
+                # Check for errors (result is a dict with "error" key)
+                if isinstance(result, dict) and result.get("error"):
+                    st.error(result["error"])
+                else:
+                    # Check if we got results (result is a list of internships)
+                    if not result:
+                        st.warning("No internships found. Try adjusting your search criteria.")
+                    else:
+                        # Get current internships to check for duplicates
+                        all_internships = st.session_state.get('all_internships', [])
+                        
+                        # Process and save the results
+                        new_internships, duplicate_internships = process_and_save_search_results(
+                            result, user_id, all_internships
+                        )
+                        
+                        if new_internships > 0 or duplicate_internships > 0:
+                            st.success(f"✅ Found {new_internships} new internships and {duplicate_internships} duplicates!")
+                            # Force refresh the data to show new results
+                            st.session_state.force_refresh = True
+                        else:
+                            st.info("No new internships found in this search.")
+                    
+                    # Then start continuous search regardless of results
+                    st.session_state.continuous_search_active = True
+                    st.session_state.last_job_title = job_title
+                    st.session_state.last_location = location
+                    
+                    # Start the background thread for continuous searching
+                    search_thread = threading.Thread(
+                        target=continuous_scraping,
+                        args=(job_title, search_location, user_id),
+                        daemon=True
+                    )
+                    search_thread.start()
+                    st.session_state.search_thread = search_thread
+                    
+                    st.success(f"🔄 Continuous search started! Monitoring for '{job_title}' {location_display} every {SCRAPING_INTERVAL_MINUTES} minutes.")
+                    st.rerun()
 
-    # Check if we need to trigger a search (from continuous search button)
-    if st.session_state.get('trigger_search', False):
-        submitted = True
-        job_title = st.session_state.get('search_job_title', '')
-        location = st.session_state.get('search_location', 'Canada')
-        last_24_hours = st.session_state.get('search_last_24h', False)
+    # Stop continuous search button (outside form)
+    if st.session_state.get('continuous_search_active', False):
+        if st.button("Stop Continuous Search", type="secondary", use_container_width=True):
+            st.session_state.continuous_search_active = False
+            st.session_state.search_thread = None
+            st.success("� Continuous search stopped.")
+            st.rerun()
         # Clear the trigger flag
         st.session_state.trigger_search = False
 
@@ -256,8 +252,12 @@ def show_scraper_page():
         st.session_state['last_job_title'] = job_title
         st.session_state['last_location'] = location
 
-        with st.spinner("Scraping LinkedIn. Please wait..."):
-            result = scrape_linkedin(job_title, location, last_24_hours)
+        # Handle global search when location is empty
+        search_location = location.strip() if location else None
+        location_display = f" in {search_location}" if search_location else " globally"
+        
+        with st.spinner(f"Scraping LinkedIn{location_display}. Please wait..."):
+            result = scrape_linkedin(job_title, search_location, last_24_hours)
 
         if isinstance(result, dict) and result.get("error"):
             st.error(result["error"])

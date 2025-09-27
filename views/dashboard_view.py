@@ -3,6 +3,17 @@ from supabase_db import SupabaseDB
 from datetime import datetime
 import time
 from dateutil import parser
+import math
+from ai_content_generator import (
+    generate_email_content, 
+    generate_cover_letter_content,
+    create_fallback_email,
+    create_fallback_cover_letter
+)
+
+# Pagination settings
+ITEMS_PER_PAGE = 50  # Reduce from unlimited to 50 per page
+MAX_INITIAL_LOAD = 100  # Only load first 100 initially
 
 def parse_date(date_str):
     """Helper function to parse dates in various formats"""
@@ -27,6 +38,74 @@ def get_status_info(status):
     """Helper function to get consistent status styling"""
     status = status.title() if status else 'New'
     return STATUS_INFO.get(status, {'color': 'gray', 'emoji': '❔'})
+
+def get_resume_status():
+    """Check if user has any saved resume"""
+    if 'resume' in st.session_state and st.session_state.resume:
+        return {
+            'has_resume': True,
+            'count': 1,
+            'emoji': '✅',
+            'color': 'green',
+            'text': 'Resume'
+        }
+    else:
+        return {
+            'has_resume': False,
+            'count': 0,
+            'emoji': '❌',
+            'color': 'red',
+            'text': 'No Resume'
+        }
+
+def generate_application_content(internship, additional_info, content_type):
+    """Generate email or cover letter using AI based on resume and job info"""
+    
+    # Check if user has resume
+    if 'resume' not in st.session_state or not st.session_state.resume:
+        return False
+    
+    # Validate internship data
+    if not internship or not isinstance(internship, dict):
+        st.error("Invalid internship data")
+        return False
+    
+    # Ensure internship has an ID
+    internship_id = internship.get('id', 'unknown')
+    if not internship_id:
+        st.error("Internship missing ID")
+        return False
+    
+    resume = st.session_state.resume
+    
+    try:
+        if content_type == "email":
+            # Try AI generation first
+            success, generated_content = generate_email_content(resume, internship, additional_info)
+            
+            # If AI fails, use fallback template
+            if not success:
+                st.warning(f"AI generation failed: {generated_content}")
+                generated_content = create_fallback_email(resume, internship, additional_info)
+            
+            st.session_state[f"generated_email_{internship_id}"] = generated_content
+            
+        elif content_type == "cover_letter":
+            # Try AI generation first
+            success, generated_content = generate_cover_letter_content(resume, internship, additional_info)
+            
+            # If AI fails, use fallback template
+            if not success:
+                st.warning(f"AI generation failed: {generated_content}")
+                generated_content = create_fallback_cover_letter(resume, internship, additional_info)
+            
+            st.session_state[f"generated_cover_{internship_id}"] = generated_content
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error generating content: {str(e)}")
+        return False
 
 def show_dashboard_page():
     """Renders the main content of the dashboard page."""
@@ -56,7 +135,7 @@ def show_dashboard_page():
 
     # Display Statistics with emojis
     st.markdown("### 📈 Overview")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     # Calculate statistics
     total_internships = len(all_internships) if all_internships is not None else 0
@@ -72,6 +151,20 @@ def show_dashboard_page():
         st.metric("✅ Applied", applied_internships)
     with col4:
         st.metric("❌ Rejected", rejected_internships)
+    with col5:
+        resume_status = get_resume_status()
+        st.metric("📄 Resume", "Available" if resume_status['has_resume'] else "None")
+    
+    st.markdown("---")
+    
+    # Resume info section
+    resume_status = get_resume_status()
+    if resume_status['has_resume']:
+        with st.expander("📄 Resume Information", expanded=False):
+            st.success(f"✅ You have a resume saved in session.")
+            st.info("**📁 JSON Storage Location:**\n- Session storage: Resume is stored in your current browser session\n- Downloads: Use the download button in Resume Manager to save JSON file locally\n- Local files: Downloaded JSON files are saved to your browser's default download folder")
+    else:
+        st.warning("📄 No resume uploaded. Consider adding your resume in the Resume Manager for better application tracking.")
     
     st.markdown("---")
 
@@ -98,7 +191,30 @@ def show_dashboard_page():
     else:
         filtered_internships = [i for i in all_internships if i.get('status') == selected_status]
     
-    # Sort internships by status (new -> applied -> rejected) and then by date
+    # Pagination setup for filtered internships
+    
+    # Pagination logic
+    total_items = len(filtered_internships) if filtered_internships else 0
+    total_pages = math.ceil(total_items / ITEMS_PER_PAGE) if total_items > 0 else 1
+    
+    if total_items > ITEMS_PER_PAGE:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            page = st.selectbox(
+                "📄 Select Page",
+                range(1, total_pages + 1),
+                key="page_selector",
+                format_func=lambda x: f"Page {x} of {total_pages}"
+            )
+    else:
+        page = 1
+    
+    # Calculate pagination slice
+    start_idx = (page - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    paginated_internships = filtered_internships[start_idx:end_idx] if filtered_internships else []
+    
+    # Sort internships by status (new -> applied -> rejected) and then by date BEFORE pagination
     try:
         # Define status priority (new first, then applied, then rejected)
         status_priority = {'new': 0, 'applied': 1, 'rejected': 2}
@@ -114,10 +230,23 @@ def show_dashboard_page():
         
         filtered_internships = sorted(filtered_internships, key=sort_key)
     except Exception as e:
-        st.warning(f"Note: Could not sort internships. Using default order.")
+        st.error(f"Error sorting internships: {e}")
+        # If sorting fails, continue with unsorted data
+        pass
+    
+    # Apply pagination AFTER sorting
+    start_idx = (page - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    paginated_internships = filtered_internships[start_idx:end_idx] if filtered_internships else []
+    
+    # Show pagination info
+    if total_items > ITEMS_PER_PAGE:
+        st.info(f"📊 Showing {len(paginated_internships)} of {total_items} internships (Page {page}/{total_pages})")
+    else:
+        st.info(f"📊 Showing {total_items} internships")
     
     # Refresh button
-    if st.button('🔄 Refresh', use_container_width=True):
+    if st.button('🔄 Refresh', key="dashboard_refresh_btn", use_container_width=True):
         st.session_state.all_internships = None
         if not st.session_state.user_id:
             st.error("You must be logged in to view internships.")
@@ -418,7 +547,7 @@ def show_dashboard_page():
         st.session_state.last_action_status = None
         st.rerun()
     
-    for internship in filtered_internships:
+    for internship in paginated_internships:
         with st.container(border=True):
             # Header section with company and status
             col1, col2 = st.columns([4, 1])
@@ -499,3 +628,98 @@ def show_dashboard_page():
                                 if update_internship_status_async(internship['id'], 'rejected'):
                                     st.success("✅ Status updated to Rejected!")
                                     st.rerun()
+                
+                # AI Generation Section
+                st.markdown("---")
+                st.markdown("### 🤖 AI Generation")
+                
+                # Job description input for AI generation
+                additional_job_info = st.text_area(
+                    "Additional Job Requirements/Info:",
+                    placeholder="Enter any additional job requirements, company culture info, or specific skills needed that aren't in the main description...",
+                    height=100,
+                    key=f"job_info_{internship['id']}"
+                )
+                
+                # AI Generation buttons
+                gen_cols = st.columns(2)
+                with gen_cols[0]:
+                    if st.button("📧 Generate Email", key=f"gen_email_{internship['id']}", use_container_width=True):
+                        if generate_application_content(internship, additional_job_info, "email"):
+                            st.success("✅ Email generated! Check below.")
+                        else:
+                            st.error("❌ Failed to generate email. Please add your resume first.")
+                
+                with gen_cols[1]:
+                    if st.button("📄 Generate Cover Letter", key=f"gen_cover_{internship['id']}", use_container_width=True):
+                        if generate_application_content(internship, additional_job_info, "cover_letter"):
+                            st.success("✅ Cover letter generated! Check below.")
+                        else:
+                            st.error("❌ Failed to generate cover letter. Please add your resume first.")
+                
+                # Display generated content if available
+                if f"generated_email_{internship['id']}" in st.session_state:
+                    st.markdown("### 📧 Generated Email")
+                    st.text_area(
+                        "Generated Email Content:",
+                        value=st.session_state[f"generated_email_{internship['id']}"],
+                        height=200,
+                        key=f"email_display_{internship['id']}"
+                    )
+                    # Copy button
+                    if st.button("📋 Copy Email", key=f"copy_email_{internship['id']}"):
+                        # In a real app, you'd use JavaScript to copy to clipboard
+                        st.info("📋 Email content is ready to copy from the text area above!")
+                
+                if f"generated_cover_{internship['id']}" in st.session_state:
+                    st.markdown("### 📄 Generated Cover Letter")
+                    st.text_area(
+                        "Generated Cover Letter Content:",
+                        value=st.session_state[f"generated_cover_{internship['id']}"],
+                        height=300,
+                        key=f"cover_display_{internship['id']}"
+                    )
+                    # Action buttons in columns
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("📋 Copy Cover Letter", key=f"copy_cover_{internship['id']}"):
+                            # In a real app, you'd use JavaScript to copy to clipboard
+                            st.info("📋 Cover letter content is ready to copy from the text area above!")
+                    
+                    with col2:
+                        # PDF Download button
+                        cover_content = st.session_state[f"generated_cover_{internship['id']}"]
+                        
+                        # Get user info from resume if available
+                        user_name = ""
+                        if "resume_data" in st.session_state and st.session_state["resume_data"]:
+                            resume_data = st.session_state["resume_data"]
+                            user_name = resume_data.get("name", "")
+                        
+                        # Generate PDF
+                        from pdf_generator import create_cover_letter_pdf, generate_pdf_filename
+                        
+                        try:
+                            pdf_data = create_cover_letter_pdf(
+                                content=cover_content,
+                                applicant_name=user_name,
+                                job_title=internship.get('title', ''),
+                                company_name=internship.get('company', '')
+                            )
+                            
+                            filename = generate_pdf_filename(
+                                applicant_name=user_name,
+                                job_title=internship.get('title', ''),
+                                company_name=internship.get('company', '')
+                            )
+                            
+                            st.download_button(
+                                label="📄 Download PDF",
+                                data=pdf_data,
+                                file_name=filename,
+                                mime="application/pdf",
+                                key=f"download_cover_{internship['id']}"
+                            )
+                        except Exception as e:
+                            st.error(f"Error generating PDF: {str(e)}")
+                            st.info("💡 Note: PDF generation requires the 'reportlab' package. Please install it to use this feature.")

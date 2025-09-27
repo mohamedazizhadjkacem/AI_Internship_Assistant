@@ -8,6 +8,8 @@ from views.dashboard_view import show_dashboard_page
 from views.history_view import show_history_page
 from views.scraper_view import show_scraper_page
 from views.telegram_settings_view import show_telegram_settings_page
+from views.resume_view import show_resume_page
+from views.smart_search_view import show_smart_search_page
 
 st.set_page_config(page_title="AI Internship Assistant", layout="wide")
 
@@ -132,9 +134,11 @@ else:
     PAGES = {
         "Home": {"icon": "🏠", "function": show_home_page},
         "Dashboard": {"icon": "📊", "function": show_dashboard_page},
-        "Application History": {"icon": "📜", "function": show_history_page},
         "Run Scrapper": {"icon": "⚙️", "function": show_scraper_page},
-        "Telegram Settings": {"icon": "🔧", "function": show_telegram_settings_page}
+        "Smart Search": {"icon": "🧠", "function": show_smart_search_page},
+        "Resume Manager": {"icon": "📄", "function": show_resume_page},
+        "Telegram Settings": {"icon": "🔧", "function": show_telegram_settings_page},
+        "Application History": {"icon": "📋", "function": show_history_page}
     }
 
     st.sidebar.title("Choose page")
@@ -149,7 +153,7 @@ else:
 
     # Logout button at the bottom
     st.sidebar.write("---")
-    if st.sidebar.button("Logout", use_container_width=True):
+    if st.sidebar.button("🚪 Logout", use_container_width=True):
         st.session_state.logged_in = False
         st.session_state.page = 'Login'
         # Clear session state on logout

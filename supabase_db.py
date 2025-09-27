@@ -169,16 +169,44 @@ class SupabaseDB:
                 return {"error": "duplicate", "message": "You have already saved this internship."}
             return {"error": str(e)}
 
-    def get_internships_by_user(self, user_id: str):
-        """Fetches all internship records for a specific user."""
+    def get_internships_by_user(self, user_id: str, limit=None, offset=None):
+        """Fetches internship records for a specific user with optional pagination."""
         if not user_id:
             return []
             
         try:
-            response = self.client.table('internships').select('*').eq('user_id', user_id).execute()
-            
-            # Get data from response
-            data = response.data if hasattr(response, 'data') else response
+            # If specific pagination is requested, use it
+            if limit is not None and offset is not None:
+                query = self.client.table('internships').select('*').eq('user_id', user_id)
+                query = query.limit(limit).offset(offset)
+                response = query.execute()
+                data = response.data if hasattr(response, 'data') else response
+            else:
+                # Fetch all records using pagination to overcome Supabase 1000 record limit
+                all_internships = []
+                batch_size = 1000
+                current_offset = 0
+                
+                while True:
+                    query = self.client.table('internships').select('*').eq('user_id', user_id)
+                    query = query.limit(batch_size).offset(current_offset)
+                    response = query.execute()
+                    
+                    batch_data = response.data if hasattr(response, 'data') else response
+                    
+                    if not batch_data or len(batch_data) == 0:
+                        # No more records
+                        break
+                    
+                    all_internships.extend(batch_data)
+                    
+                    # If we got less than the batch size, we've reached the end
+                    if len(batch_data) < batch_size:
+                        break
+                    
+                    current_offset += batch_size
+                
+                data = all_internships
             
             if not data:
                 return []
@@ -202,6 +230,17 @@ class SupabaseDB:
                 return internships
         except Exception as e:
             raise Exception(f"Failed to fetch internships: {str(e)}")
+
+    def get_internships_count(self, user_id: str):
+        """Get the total count of internships for a user (for pagination)."""
+        if not user_id:
+            return 0
+        try:
+            response = self.client.table('internships').select('id', count='exact').eq('user_id', user_id).execute()
+            return response.count if hasattr(response, 'count') else len(response.data or [])
+        except Exception as e:
+            print(f"Error getting internships count: {e}")
+            return 0
 
     def update_internship_status(self, user_id: str, internship_id: int, new_status: str):
         """Updates the status of a specific internship for a user."""

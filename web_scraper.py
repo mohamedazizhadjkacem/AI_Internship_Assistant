@@ -11,20 +11,26 @@ import re
 # and potentially a headless browser like Selenium.
 
 # @st.cache_data(ttl=300)  # Temporarily disabled caching for debugging
-def scrape_linkedin(job_title: str, location: str = "Canada", last_24_hours: bool = False):
+def scrape_linkedin(job_title: str, location: str = None, last_24_hours: bool = False, max_results: int = None):
     """Scrapes LinkedIn for internship listings.
 
     Args:
         job_title: The job title keyword(s) to search.
-        location: Location string (default "United States").
+        location: Location string (None for global search, default None).
         last_24_hours: If True, only return jobs posted in the last 24 hours.
+        max_results: Maximum number of results to return (optional, for Smart Search efficiency).
     """
     search_query = f"{job_title} internship"
-    url = (
-        f"https://www.linkedin.com/jobs/search/?keywords={search_query.replace(' ', '%20')}"
-        f"&location={location.replace(' ', '%20')}"
-        f"&sortBy=R"  # Most recent first
-    )
+    
+    # Build URL with optional location
+    url = f"https://www.linkedin.com/jobs/search/?keywords={search_query.replace(' ', '%20')}"
+    
+    # Add location parameter only if specified
+    if location and location.strip():
+        url += f"&location={location.replace(' ', '%20')}"
+    
+    # Add sorting
+    url += "&sortBy=R"  # Most recent first
     if last_24_hours:
         url += "&f_TPR=r86400"  # Only jobs posted in the last 24 hours
     
@@ -75,6 +81,11 @@ def scrape_linkedin(job_title: str, location: str = "Canada", last_24_hours: boo
                 'application_link': link_elem['href'],
                 'source_site': 'LinkedIn'
             })
+            
+            # Check if we've reached the max_results limit
+            if max_results and len(job_listings) >= max_results:
+                break
+                
         except Exception:
             # Ignore cards that can't be parsed
             continue
