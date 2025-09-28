@@ -143,6 +143,8 @@ class SupabaseDB:
         """Adds a new internship record for a specific user."""
         try:
             job_data['user_id'] = user_id
+            # Temporarily remove notified field until database is updated
+            # job_data['notified'] = job_data.get('notified', False)  # Default to not notified
             print(f"[DEBUG] add_internship: Inserting internship for user {user_id}: {job_data.get('job_title', 'Unknown')} at {job_data.get('company_name', 'Unknown')}")
             
             # Execute the insert
@@ -168,6 +170,56 @@ class SupabaseDB:
             if 'duplicate key value violates unique constraint' in str(e):
                 return {"error": "duplicate", "message": "You have already saved this internship."}
             return {"error": str(e)}
+
+    def mark_internship_as_notified(self, internship_id: str):
+        """Mark an internship as notified to prevent duplicate notifications"""
+        try:
+            response = self.client.table('internships').update({'notified': True}).eq('id', internship_id).execute()
+            return {'success': True}
+        except Exception as e:
+            print(f"[ERROR] Failed to mark internship as notified: {str(e)}")
+            return {'error': str(e)}
+    
+    def get_unnotified_internships(self, user_id: str):
+        """Get all internships that haven't been notified yet"""
+        try:
+            # First try to get internships where notified is explicitly False
+            response = self.client.table('internships').select('*').eq('user_id', user_id).eq('notified', False).execute()
+            unnotified = response.data if hasattr(response, 'data') else response
+            
+            # Also get internships where notified is NULL (existing records before the update)
+            response_null = self.client.table('internships').select('*').eq('user_id', user_id).is_('notified', 'null').execute()
+            null_notified = response_null.data if hasattr(response_null, 'data') else response_null
+            
+            # Combine both lists and remove duplicates
+            all_unnotified = unnotified + null_notified
+            seen_ids = set()
+            unique_unnotified = []
+            for internship in all_unnotified:
+                if internship['id'] not in seen_ids:
+                    seen_ids.add(internship['id'])
+                    unique_unnotified.append(internship)
+            
+            print(f"[DEBUG] Found {len(unique_unnotified)} unnotified internships (explicitly false: {len(unnotified)}, null: {len(null_notified)})")
+            return unique_unnotified
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to get unnotified internships: {str(e)}")
+            return []
+    
+    def initialize_notification_field(self, user_id: str):
+        """Initialize the notified field for existing internships (migration helper)"""
+        try:
+            # Update all existing internships for this user that have NULL notified field to True
+            # (assuming they were already processed before the notification system)
+            response = self.client.table('internships').update({'notified': True}).eq('user_id', user_id).is_('notified', 'null').execute()
+            
+            updated_count = len(response.data) if hasattr(response, 'data') and response.data else 0
+            print(f"[INFO] Initialized notification field for {updated_count} existing internships for user {user_id}")
+            return {'success': True, 'updated_count': updated_count}
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize notification field: {str(e)}")
+            return {'error': str(e)}
 
     def get_internships_by_user(self, user_id: str, limit=None, offset=None):
         """Fetches internship records for a specific user with optional pagination."""

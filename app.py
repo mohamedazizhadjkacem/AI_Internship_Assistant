@@ -9,7 +9,7 @@ from views.history_view import show_history_page
 from views.scraper_view import show_scraper_page
 from views.telegram_settings_view import show_telegram_settings_page
 from views.resume_view import show_resume_page
-from views.smart_search_view import show_smart_search_page
+from views.ai_generator_view import show_ai_generator_page
 
 st.set_page_config(page_title="AI Internship Assistant", layout="wide")
 
@@ -135,7 +135,7 @@ else:
         "Home": {"icon": "🏠", "function": show_home_page},
         "Dashboard": {"icon": "📊", "function": show_dashboard_page},
         "Run Scrapper": {"icon": "⚙️", "function": show_scraper_page},
-        "Smart Search": {"icon": "🧠", "function": show_smart_search_page},
+        "AI Content Generator": {"icon": "🤖", "function": show_ai_generator_page},
         "Resume Manager": {"icon": "📄", "function": show_resume_page},
         "Telegram Settings": {"icon": "🔧", "function": show_telegram_settings_page},
         "Application History": {"icon": "📋", "function": show_history_page}

@@ -50,6 +50,12 @@ def process_and_save_search_results(result, user_id, all_internships):
 def continuous_scraping(job_title, location, user_id):
     """Background task to continuously scrape LinkedIn for new internships."""
     db = SupabaseDB()
+    
+    # Temporarily skip notification field initialization until database is updated
+    # print(f"[DEBUG] Initializing notification field for user {user_id}")
+    # init_result = db.initialize_notification_field(user_id)
+    # print(f"[DEBUG] Notification field initialization result: {init_result}")
+    
     # Fetch user's Telegram config once at the start
     user_profile = db.get_user_profile(user_id)
     telegram_bot_token = user_profile.get('telegram_bot_token')
