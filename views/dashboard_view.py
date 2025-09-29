@@ -30,8 +30,7 @@ def force_internships_refresh():
 # Status configurations for consistent UI
 STATUS_INFO = {
     'New': {'color': 'blue', 'emoji': '✨'},
-    'Applied': {'color': 'green', 'emoji': '✅'},
-    'Rejected': {'color': 'red', 'emoji': '❌'}
+    'Applied': {'color': 'green', 'emoji': '✅'}
 }
 
 def get_status_info(status):
@@ -135,13 +134,12 @@ def show_dashboard_page():
 
     # Display Statistics with emojis
     st.markdown("### 📈 Overview")
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     
     # Calculate statistics
     total_internships = len(all_internships) if all_internships is not None else 0
     new_internships = len([i for i in (all_internships or []) if i.get('status') == 'new'])
     applied_internships = len([i for i in (all_internships or []) if i.get('status') == 'applied'])
-    rejected_internships = len([i for i in (all_internships or []) if i.get('status') == 'rejected'])
     
     with col1:
         st.metric("🎯 Total", total_internships)
@@ -150,8 +148,6 @@ def show_dashboard_page():
     with col3:
         st.metric("✅ Applied", applied_internships)
     with col4:
-        st.metric("❌ Rejected", rejected_internships)
-    with col5:
         resume_status = get_resume_status()
         st.metric("📄 Resume", "Available" if resume_status['has_resume'] else "None")
     
@@ -172,14 +168,13 @@ def show_dashboard_page():
     status_options_with_emoji = {
         'All': '🎯 All',
         'new': '✨ New',
-        'applied': '✅ Applied',
-        'rejected': '❌ Rejected'
+        'applied': '✅ Applied'
     }
     
     # Radio button filter with emojis
     selected_status = st.radio(
         "Filter by status:",
-        options=['All'] + ['new', 'applied', 'rejected'],
+        options=['All'] + ['new', 'applied'],
         format_func=lambda x: status_options_with_emoji.get(x, x),
         horizontal=True,
         key='status_filter'
@@ -346,22 +341,22 @@ def show_dashboard_page():
                         if internship.get('application_link'):
                             st.link_button("🌐 View Application", internship['application_link'], use_container_width=True)
                         
-                        # Show reject button for applied internships
+                        # Show delete button for applied internships
                         reject_key = f"reject_detail_{internship['id']}_{st.session_state.button_counter}"
-                        if st.button("❌ Reject", key=reject_key, type="secondary", use_container_width=True):
+                        if st.button("🗑️ Delete", key=reject_key, type="secondary", use_container_width=True):
                             try:
                                 db = SupabaseDB()
-                                result = db.update_internship_status(user_id, internship['id'], 'rejected')
+                                result = db.delete_internship(user_id, internship['id'])
                                 if result:
-                                    st.success("✅ Internship successfully rejected!")
+                                    st.success("✅ Internship successfully deleted!")
                                     st.session_state.all_internships = None
                                     st.session_state.show_details = None
                                     time.sleep(1)
                                     st.experimental_rerun()
                                 else:
-                                    st.error("Failed to reject internship. Please try again.")
+                                    st.error("Failed to delete internship. Please try again.")
                             except Exception as e:
-                                st.error(f"Error updating status: {str(e)}")
+                                st.error(f"Error deleting internship: {str(e)}")
                     
                     else:  # new status
                         # Action buttons for new internships in details view
@@ -389,27 +384,27 @@ def show_dashboard_page():
                                 except Exception as e:
                                     st.error(f"Error updating internship status: {str(e)}")
                         
-                        # Reject button
+                        # Delete button
                         with buttons_col2:
                             reject_key = f"reject_detail_{internship['id']}_{st.session_state.button_counter}"
-                            if st.button("❌ Reject", key=reject_key, type="secondary", use_container_width=True):
+                            if st.button("🗑️ Delete", key=reject_key, type="secondary", use_container_width=True):
                                 try:
                                     db = SupabaseDB()
                                     internship_id = int(internship['id'])
-                                    # First update the status
-                                    result = db.update_internship_status(user_id, internship_id, 'rejected')
+                                    # Delete the internship from database
+                                    result = db.delete_internship(user_id, internship_id)
                                     if result:
-                                        # Update successful, now update the UI
+                                        # Deletion successful, now update the UI
                                         st.session_state.show_details = None  # Close the modal
                                         st.session_state.all_internships = None  # Force refresh of internships
                                         # Show success message and rerun
-                                        st.success("✅ Internship successfully rejected!")
+                                        st.success("✅ Internship successfully deleted!")
                                         time.sleep(0.5)  # Brief pause to show the message
                                         st.rerun()
                                     else:
-                                        st.error("Failed to reject internship. Please try again.")
+                                        st.error("Failed to delete internship. Please try again.")
                                 except Exception as e:
-                                    st.error(f"Error updating internship status: {str(e)}")
+                                    st.error(f"Error deleting internship: {str(e)}")
                         
                         # Show application link if available
                         if internship.get('application_link'):
@@ -443,11 +438,11 @@ def show_dashboard_page():
                     with col1:
                         if st.button("Yes, Delete", type="primary", key="confirm_yes", use_container_width=True):
                             db = SupabaseDB()
-                            # First mark as rejected
-                            if db.update_internship_status(user_id, internship_to_delete['id'], 'rejected'):
-                                st.success("✅ Internship successfully marked as rejected!")
+                            # Delete the internship from database
+                            if db.delete_internship(user_id, internship_to_delete['id']):
+                                st.success("✅ Internship successfully deleted!")
                                 st.session_state.all_internships = None
-                                time.sleep(1)  # Give time to see the rejection message
+                                time.sleep(1)  # Give time to see the deletion message
                                 # Then delete the internship
                                 if db.delete_internship(user_id, internship_to_delete['id']):
                                     # Store success message in session state

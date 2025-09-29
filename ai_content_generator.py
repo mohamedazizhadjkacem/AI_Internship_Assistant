@@ -106,14 +106,21 @@ def format_projects_for_prompt(projects: List[dict]) -> str:
         return "No projects listed"
     
     formatted = []
-    for project in projects[:3]:  # Limit to 3 most relevant
+    for i, project in enumerate(projects[:3]):  # Limit to 3 most relevant
         if project is None:
             continue
-        name = project.get('name', 'Project') if project else 'Project'
+        name = project.get('name', '') if project else ''
         description = project.get('description', []) if project else []
         technologies = project.get('technologies', []) if project else []
         
-        proj_str = f"- {name}"
+        # Use actual project name if available, otherwise use descriptive language
+        if name and name.strip() and name != 'Project':
+            proj_str = f"- {name} Project"
+        else:
+            # Use more natural descriptions instead of generic naming
+            project_descriptors = ["Academic project", "Personal project", "Development project"]
+            proj_str = f"- {project_descriptors[i % len(project_descriptors)]}"
+        
         if description:
             proj_str += f": {description[0]}"
         if technologies:
@@ -214,6 +221,9 @@ CRITICAL REQUIREMENTS:
 - DO NOT include personal contact information - this will be added automatically
 - End the email with "Best regards," only
 - When in doubt, be more generic rather than inventing false details
+- NEVER use generic project names like "Project A", "Project B", "Project C", etc.
+- If referring to projects, use natural language like "in one of my projects", "during a recent project", or mention the actual project name if provided
+- Avoid alphabetical or numerical project labeling completely
 
 Generate the email now:
 """
@@ -345,6 +355,10 @@ CRITICAL REQUIREMENTS:
 - DO NOT include personal contact information - this will be added automatically
 - Start with the date and company address, skip personal header
 - End with "Sincerely," only
+- NEVER use generic project names like "Project A", "Project B", "Project C", "Project D", etc.
+- When referring to projects, use natural language such as "in one of my projects", "through a recent project", "during my academic work", or use the actual project name if provided
+- Completely avoid alphabetical or numerical project labeling (A, B, C, D, 1, 2, 3, etc.)
+- If multiple projects exist, refer to them as "various projects", "several projects", or "my project work"
 
 Generate the cover letter now:
 """
@@ -449,7 +463,7 @@ def call_groq_api(prompt: str, max_tokens: int = 1000) -> Tuple[bool, str]:
         "messages": [
             {
                 "role": "system",
-                "content": "You are a professional career counselor and expert writer specializing in job applications. Generate high-quality, tailored content that helps candidates stand out. CRITICAL RULE: Only use factual information provided in the prompt. Never fabricate experiences, projects, achievements, or statistics. If insufficient information is provided, focus on transferable skills, enthusiasm to learn, and general qualifications."
+                "content": "You are a professional career counselor and expert writer specializing in job applications. Generate high-quality, tailored content that helps candidates stand out. CRITICAL RULES: 1) Only use factual information provided in the prompt. Never fabricate experiences, projects, achievements, or statistics. 2) NEVER use generic project names like 'Project A', 'Project B', 'Project C', etc. Instead use natural language like 'in one of my projects', 'through my project work', or the actual project name if provided. 3) If insufficient information is provided, focus on transferable skills, enthusiasm to learn, and general qualifications."
             },
             {
                 "role": "user", 
