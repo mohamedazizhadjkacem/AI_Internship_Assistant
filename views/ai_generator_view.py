@@ -4,7 +4,14 @@ Allows users to generate emails and cover letters from LinkedIn job descriptions
 """
 
 import streamlit as st
-from ai_content_generator import generate_email_content, generate_cover_letter_content, create_fallback_email, create_fallback_cover_letter
+from ai_content_generator import (
+    generate_email_content, 
+    generate_cover_letter_content, 
+    generate_custom_qa_content,
+    create_fallback_email, 
+    create_fallback_cover_letter,
+    create_fallback_qa
+)
 from pdf_generator import create_cover_letter_pdf, generate_pdf_filename
 import re
 from datetime import datetime
@@ -55,6 +62,33 @@ def show_ai_generator_page():
         **The more details, the better the AI can tailor your content!**
         """)
     
+    # Interview Questions Input Section (Separate)
+    st.markdown("---")
+    st.markdown("## 🎯 Interview Questions (Optional)")
+    st.markdown("*Enter the specific interview questions you received from companies for personalized answers*")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        custom_questions = st.text_area(
+            "Interview Questions You Received:",
+            placeholder="Enter the specific interview questions you received after submitting your application...\n\nExample:\n\n1. Tell me about yourself and your background in computer science.\n2. Why are you interested in this internship position at our company?\n3. Describe a challenging project you've worked on and how you solved it.\n4. What programming languages are you most comfortable with?\n5. How do you handle working in a team environment?\n\nNote: Leave this empty if you only want to generate emails and cover letters.",
+            height=250,
+            key="custom_questions_input"
+        )
+    
+    with col2:
+        st.markdown("### 💡 Q&A Tips")
+        st.info("""
+        **For best interview preparation:**
+        - Copy the exact questions from your interview invitation
+        - Include all questions you received
+        - Questions can be in any format (numbered, bulleted, etc.)
+        - Leave empty if you don't have specific questions yet
+        
+        **The AI will generate perfect answers based on your resume!**
+        """)
+    
     # Parse job information and generate content
     if job_description.strip():
         parsed_info = parse_job_description(job_description)
@@ -63,15 +97,38 @@ def show_ai_generator_page():
         st.markdown("---")
         st.markdown("## 🚀 Generate Content")
         
-        col1, col2 = st.columns(2)
+        # Determine button layout based on whether custom questions are provided
+        has_custom_questions = custom_questions.strip() != ""
         
-        with col1:
-            if st.button("📧 Generate Email", type="primary", use_container_width=True):
-                generate_content("email", parsed_info, "")
-        
-        with col2:
-            if st.button("📄 Generate Cover Letter", type="primary", use_container_width=True):
-                generate_content("cover_letter", parsed_info, "")
+        if has_custom_questions:
+            # Show three buttons when custom questions are provided
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("📧 Generate Email", type="primary", use_container_width=True):
+                    generate_content("email", parsed_info, "")
+            
+            with col2:
+                if st.button("📄 Generate Cover Letter", type="primary", use_container_width=True):
+                    generate_content("cover_letter", parsed_info, "")
+            
+            with col3:
+                if st.button("🎯 Answer Questions", type="primary", use_container_width=True):
+                    generate_content("custom_qa", parsed_info, "", custom_questions)
+        else:
+            # Show only two buttons when no custom questions
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("📧 Generate Email", type="primary", use_container_width=True):
+                    generate_content("email", parsed_info, "")
+            
+            with col2:
+                if st.button("📄 Generate Cover Letter", type="primary", use_container_width=True):
+                    generate_content("cover_letter", parsed_info, "")
+            
+            # Info message about Q&A
+            st.info("💡 **Tip**: Enter interview questions above to get personalized answers based on your resume!")
         
         # Display generated content
         display_generated_content(parsed_info)
@@ -151,8 +208,8 @@ def parse_job_description(job_description: str) -> dict:
     
     return parsed
 
-def generate_content(content_type: str, job_info: dict, additional_info: str):
-    """Generate email or cover letter content"""
+def generate_content(content_type: str, job_info: dict, additional_info: str, custom_questions: str = ""):
+    """Generate email, cover letter, or custom Q&A content"""
     
     try:
         resume = st.session_state.resume
@@ -177,6 +234,16 @@ def generate_content(content_type: str, job_info: dict, additional_info: str):
                 
                 st.session_state['generated_cover_letter'] = content
                 st.success("✅ Cover letter generated successfully!")
+            
+            elif content_type == "custom_qa":
+                success, content = generate_custom_qa_content(resume, job_info, custom_questions, additional_info)
+                
+                if not success:
+                    st.warning(f"AI generation failed: {content}")
+                    content = create_fallback_qa(resume, job_info, additional_info)
+                
+                st.session_state['generated_qa'] = content
+                st.success("✅ Interview answers generated successfully!")
         
         st.rerun()
         
@@ -269,15 +336,43 @@ def display_generated_content(job_info: dict):
                 del st.session_state['generated_cover_letter']
                 st.rerun()
     
+    # Display generated Q&A
+    if 'generated_qa' in st.session_state:
+        st.markdown("---")
+        st.markdown("## 🎯 Your Interview Answers")
+        st.markdown("*Personalized answers based on your resume and the job requirements*")
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.text_area(
+                "Your Personalized Interview Answers:",
+                value=st.session_state['generated_qa'],
+                height=500,
+                key="qa_display"
+            )
+        
+        with col2:
+            st.markdown("### Actions")
+            
+            if st.button("📋 Copy Answers", use_container_width=True):
+                st.info("📋 Interview answers are ready to copy from the text area!")
+            
+            if st.button("🗑️ Clear Answers", use_container_width=True):
+                del st.session_state['generated_qa']
+                st.rerun()
+    
     # Show example if no content generated yet
-    if 'generated_email' not in st.session_state and 'generated_cover_letter' not in st.session_state:
+    if ('generated_email' not in st.session_state and 
+        'generated_cover_letter' not in st.session_state and 
+        'generated_qa' not in st.session_state):
         show_example_content()
 
 def show_example_content():
     """Show example of what the generated content looks like"""
     
     with st.expander("📖 **See Example Output**", expanded=False):
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             st.markdown("### 📧 Email Example")
@@ -326,3 +421,20 @@ I would welcome the opportunity to discuss how my background, skills, and enthus
 
 Sincerely,
 [Your Name]""", language="text")
+        
+        with col3:
+            st.markdown("### 🎯 Custom Q&A Example")
+            st.code("""Your Questions:
+1. Tell me about yourself and your background.
+2. Why are you interested in this internship?
+3. Describe a challenging project you've worked on.
+
+Generated Answers:
+Q1: Tell me about yourself and your background.
+A1: I'm a Computer Science student with strong expertise in React.js, JavaScript, and web development. Through my academic projects and internship experience, I've developed skills in building responsive applications and working with modern development tools like Git.
+
+Q2: Why are you interested in this internship?
+A2: This role perfectly aligns with my technical background in React.js and web development. I'm excited about the opportunity to apply my JavaScript skills in a professional environment and contribute to TechCorp's innovative projects.
+
+Q3: Describe a challenging project you've worked on.
+A3: In my recent web development project, I built a responsive application using React.js that required implementing complex state management and API integrations. I overcame challenges with component optimization and learned valuable lessons about clean code practices.""", language="text")

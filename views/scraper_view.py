@@ -10,40 +10,38 @@ from config import SCRAPING_INTERVAL_MINUTES
 
 
 def process_and_save_search_results(result, user_id, all_internships):
-    """Helper function to process and save search results"""
-    existing_links = {internship['application_link'] for internship in all_internships}
-    
-    print(f"[DEBUG] Found {len(all_internships)} existing internships in session state")
-    print(f"[DEBUG] Existing links: {list(existing_links)[:5]}...")  # Show first 5 links
+    """Helper function to process and save search results with comprehensive duplicate detection"""
     print(f"[DEBUG] Processing {len(result)} scraped internships")
+    print(f"[DEBUG] Current user has {len(all_internships)} existing internships")
     
     db = SupabaseDB()
     new_internships_count = 0
     duplicate_count = 0
     
     for i, internship in enumerate(result):
-        link = internship["application_link"]
-        print(f"[DEBUG] Scraped internship {i+1}: {internship.get('job_title', 'Unknown')} at {internship.get('company_name', 'Unknown')}")
-        print(f"[DEBUG] Scraped link: {link}")
-        if link not in existing_links:
-            save_data = {
-                **internship,
-                "status": "new",
-            }
-            print(f"[DEBUG] Attempting to save internship: {internship.get('job_title', 'Unknown')} at {internship.get('company_name', 'Unknown')}")
-            resp = db.add_internship(user_id, save_data)
-            print(f"[DEBUG] Save response: {resp}")
-            if resp.get("success"):
-                new_internships_count += 1
-                print(f"[DEBUG] Successfully saved internship {new_internships_count}")
-            elif resp.get("error") == "duplicate":
-                duplicate_count += 1
-                print(f"[DEBUG] Duplicate internship detected")
-            else:
-                print(f"[DEBUG] Failed to save internship: {resp}")
+        print(f"[DEBUG] Processing internship {i+1}: {internship.get('job_title', 'Unknown')} at {internship.get('company_name', 'Unknown')}")
+        
+        save_data = {
+            **internship,
+            "status": "new",
+        }
+        
+        # Use improved duplicate checking from database
+        resp = db.add_internship(user_id, save_data)
+        print(f"[DEBUG] Save response: {resp}")
+        
+        if resp.get("success"):
+            new_internships_count += 1
+            print(f"[DEBUG] Successfully saved new internship {new_internships_count}")
+        elif resp.get("error") == "duplicate":
+            duplicate_count += 1
+            reason = resp.get("message", "unknown reason")
+            print(f"[DEBUG] Duplicate internship detected: {reason}")
         else:
-            print(f"[DEBUG] Skipping existing internship: {internship.get('job_title', 'Unknown')}")
+            error_msg = resp.get("error", "unknown error")
+            print(f"[DEBUG] Failed to save internship: {error_msg}")
     
+    print(f"[DEBUG] Final results: {new_internships_count} new, {duplicate_count} duplicates")
     return new_internships_count, duplicate_count
 
 
@@ -64,43 +62,47 @@ def continuous_scraping(job_title, location, user_id):
 
     while True:
         try:
-            # Get current internships from database
+            # Get current internships count for logging
             all_internships = db.get_internships_by_user(user_id)
-            existing_links = {internship['application_link'] for internship in all_internships}
-            
             print(f"[DEBUG] Continuous: Found {len(all_internships) if all_internships else 0} existing internships in database")
-            print(f"[DEBUG] Continuous: Existing links: {list(existing_links)[:3]}...")  # Show first 3 links
 
             # Scrape LinkedIn
             result = scrape_linkedin(job_title, location, True)  # Only last 24h
             print(f"[DEBUG] Scraped {len(result) if isinstance(result, list) else 0} internships from LinkedIn.")
 
+            newly_saved_internships = []
             if isinstance(result, list):
-                new_internships = []
                 for internship in result:
-                    link = internship["application_link"]
-                    print(f"[DEBUG] Continuous: Checking scraped link: {link}")
-                    if link not in existing_links:
-                        save_data = {
-                            **internship,
-                            "status": "new",
-                        }
-                        print(f"[DEBUG] Continuous: Attempting to save internship: {internship.get('job_title', 'Unknown')} at {internship.get('company_name', 'Unknown')}")
-                        resp = db.add_internship(user_id, save_data)
-                        print(f"[DEBUG] Continuous: Save response: {resp}")
-                        if resp.get("success"):
-                            new_internships.append(internship)
-                            print(f"[DEBUG] Continuous: Successfully saved internship")
-                        else:
-                            print(f"[DEBUG] Continuous: Failed to save internship: {resp}")
+                    print(f"[DEBUG] Continuous: Processing internship: {internship.get('job_title', 'Unknown')} at {internship.get('company_name', 'Unknown')}")
+                    
+                    save_data = {
+                        **internship,
+                        "status": "new"
+                    }
+                    
+                    resp = db.add_internship(user_id, save_data)
+                    print(f"[DEBUG] Continuous: Save response: {resp}")
+                    
+                    if resp.get("success"):
+                        # Add the internship ID to the data for notification tracking
+                        internship_with_id = {**internship, 'id': resp['data']['id']}
+                        newly_saved_internships.append(internship_with_id)
+                        print(f"[DEBUG] Continuous: Successfully saved internship with ID {resp['data']['id']}")
+                    elif resp.get("error") == "duplicate":
+                        print(f"[DEBUG] Continuous: Duplicate internship detected: {resp.get('message', 'unknown reason')}")
                     else:
-                        print(f"[DEBUG] Continuous: Skipping existing internship: {internship.get('job_title', 'Unknown')}")
-                print(f"[DEBUG] Found {len(new_internships)} new internships for user {user_id}.")
+                        print(f"[DEBUG] Continuous: Failed to save internship: {resp}")
+                        
+            # Only notify about newly saved internships since duplicates are filtered out
+            internships_to_notify = newly_saved_internships
+            print(f"[DEBUG] Total internships to notify: {len(internships_to_notify)} newly saved internships")
 
-                # Send notification if new internships found
-                if new_internships and telegram_bot_token and telegram_chat_id:
-                    # Send individual detailed messages for each internship
-                    for internship in new_internships:
+            # Send notifications if there are internships to notify about
+            if internships_to_notify and telegram_bot_token and telegram_chat_id:
+                successfully_notified = []
+                
+                # Send individual detailed messages for each internship
+                for internship in internships_to_notify:
                         detail_message = (
                             f"✨ New Internship: {internship['job_title']}\n"
                             f"🏢 Company: {internship['company_name']}\n"
@@ -110,23 +112,28 @@ def continuous_scraping(job_title, location, user_id):
                             f"{internship.get('job_description', '').split('Posted')[0]}"
                         )
                         try:
-                            print(f"[DEBUG] Sending Telegram notification for internship: {detail_message}")
+                            print(f"[DEBUG] Sending Telegram notification for internship: {internship['job_title']} at {internship['company_name']}")
                             send_telegram_notification(detail_message, telegram_bot_token, telegram_chat_id)
+                            successfully_notified.append(internship)
+                            print(f"[DEBUG] Successfully sent notification for internship ID: {internship.get('id', 'unknown')}")
                         except Exception as notify_err:
                             print(f"[ERROR] Failed to send Telegram notification: {notify_err}")
-                    # Send summary message
-                    summary = f"🎯 Found {len(new_internships)} new internships!\n\n"
-                    for idx, internship in enumerate(new_internships, 1):
+                
+                # Send summary message only if notifications were successful
+                if successfully_notified:
+                    summary = f"🎯 Sent {len(successfully_notified)} internship notifications!\n\n"
+                    for idx, internship in enumerate(successfully_notified, 1):
                         summary += f"{idx}. {internship['job_title']} at {internship['company_name']}\n"
                     try:
-                        print(f"[DEBUG] Sending Telegram summary notification: {summary}")
+                        print(f"[DEBUG] Sending Telegram summary notification")
                         send_telegram_notification(summary, telegram_bot_token, telegram_chat_id)
                     except Exception as notify_err:
                         print(f"[ERROR] Failed to send Telegram summary notification: {notify_err}")
-                elif not new_internships:
-                    print(f"[DEBUG] No new internships found for user {user_id}.")
-                elif not (telegram_bot_token and telegram_chat_id):
-                    print(f"[ERROR] Telegram config missing for user {user_id}.")
+                        
+            elif not internships_to_notify:
+                print(f"[DEBUG] No new internships to notify for user {user_id}.")
+            elif not (telegram_bot_token and telegram_chat_id):
+                print(f"[ERROR] Telegram config missing for user {user_id}.")
 
         except Exception as e:
             print(f"Error in continuous scraping: {e}")

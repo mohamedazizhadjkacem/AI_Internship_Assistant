@@ -139,13 +139,46 @@ class SupabaseDB:
         except Exception as e:
             return None
 
-    def add_internship(self, user_id: str, job_data: dict):
-        """Adds a new internship record for a specific user."""
+    def check_internship_exists(self, user_id: str, job_data: dict) -> dict:
+        """Check if an internship already exists for the user using multiple criteria"""
         try:
+            application_link = job_data.get('application_link', '')
+            job_title = job_data.get('job_title', '')
+            company_name = job_data.get('company_name', '')
+            
+            # Primary check: exact application link match
+            if application_link:
+                response = self.client.table('internships').select('id').eq('user_id', user_id).eq('application_link', application_link).execute()
+                if hasattr(response, 'data') and response.data and len(response.data) > 0:
+                    return {'exists': True, 'reason': 'application_link', 'existing_id': response.data[0]['id']}
+            
+            # Secondary check: same job title and company combination
+            if job_title and company_name:
+                response = self.client.table('internships').select('id').eq('user_id', user_id).eq('job_title', job_title).eq('company_name', company_name).execute()
+                if hasattr(response, 'data') and response.data and len(response.data) > 0:
+                    return {'exists': True, 'reason': 'job_company_match', 'existing_id': response.data[0]['id']}
+            
+            return {'exists': False}
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to check internship existence: {str(e)}")
+            return {'exists': False, 'error': str(e)}
+
+    def add_internship(self, user_id: str, job_data: dict):
+        """Adds a new internship record for a specific user with duplicate checking."""
+        try:
+            # First check if this internship already exists
+            duplicate_check = self.check_internship_exists(user_id, job_data)
+            if duplicate_check.get('exists'):
+                reason = duplicate_check.get('reason', 'unknown')
+                existing_id = duplicate_check.get('existing_id', 'unknown')
+                print(f"[DEBUG] add_internship: Duplicate detected - {reason} (existing ID: {existing_id})")
+                return {'error': 'duplicate', 'message': f'Duplicate internship detected ({reason})', 'existing_id': existing_id}
+            
             job_data['user_id'] = user_id
             # Temporarily remove notified field until database is updated
             # job_data['notified'] = job_data.get('notified', False)  # Default to not notified
-            print(f"[DEBUG] add_internship: Inserting internship for user {user_id}: {job_data.get('job_title', 'Unknown')} at {job_data.get('company_name', 'Unknown')}")
+            print(f"[DEBUG] add_internship: Inserting new internship for user {user_id}: {job_data.get('job_title', 'Unknown')} at {job_data.get('company_name', 'Unknown')}")
             
             # Execute the insert
             response = self.client.table('internships').insert(job_data).execute()

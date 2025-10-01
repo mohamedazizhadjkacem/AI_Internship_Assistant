@@ -56,20 +56,17 @@ def format_education_for_prompt(education: List[dict]) -> str:
             continue
         degree = edu.get('degree', 'Degree') if edu else 'Degree'
         institution = edu.get('institution', 'Institution') if edu else 'Institution'
-        graduation_date = edu.get('graduation_date', 'N/A') if edu else 'N/A'
-        gpa = edu.get('gpa', '') if edu else ''
+        years = edu.get('years', 'N/A') if edu else 'N/A'
         
         edu_str = f"- {degree} from {institution}"
-        if graduation_date and graduation_date != 'N/A':
-            edu_str += f" ({graduation_date})"
-        if gpa:
-            edu_str += f" - GPA: {gpa}"
+        if years and years != 'N/A':
+            edu_str += f" ({years})"
         formatted.append(edu_str)
     
     return '\n'.join(formatted)
 
 def format_experience_for_prompt(experience: List[dict]) -> str:
-    """Format work experience data for prompt inclusion (privacy-focused)"""
+    """Format work experience data for prompt inclusion with context for natural references"""
     if not experience or experience is None:
         return "No formal work experience listed"
     
@@ -78,13 +75,18 @@ def format_experience_for_prompt(experience: List[dict]) -> str:
         if exp is None:
             continue
         
-        # Use correct field names from JSON structure and exclude organization for privacy
-        role = exp.get('role', exp.get('job_title', 'Position')) if exp else 'Position'
+        # Use correct field names from resume structure
+        role = exp.get('role', 'Position') if exp else 'Position'
         duration = exp.get('duration', 'Duration') if exp else 'Duration'
-        achievements = exp.get('achievements', exp.get('description', [])) if exp else []
+        organization = exp.get('organization', '') if exp else ''
+        achievements = exp.get('achievements', []) if exp else []
         
-        # Format without organization name for privacy
-        exp_str = f"- {role} ({duration})"
+        # Format with organization context to enable natural references
+        if organization and organization.strip():
+            exp_str = f"- {role} at {organization} ({duration})"
+        else:
+            exp_str = f"- {role} ({duration})"
+        
         if achievements:
             key_achievements = achievements[:2]  # Top 2 achievements
             exp_str += f"\n  Key achievements: {'; '.join(key_achievements)}"
@@ -101,28 +103,41 @@ def format_skills_for_prompt(skills: List[str]) -> str:
     return ', '.join(skills[:12])  # Limit to top 12 skills
 
 def format_projects_for_prompt(projects: List[dict]) -> str:
-    """Format projects data for prompt inclusion"""
+    """Format projects data for prompt inclusion with context for natural references"""
     if not projects or projects is None:
         return "No projects listed"
     
     formatted = []
-    for i, project in enumerate(projects[:3]):  # Limit to 3 most relevant
+    for project in projects[:3]:  # Limit to 3 most relevant
         if project is None:
             continue
-        name = project.get('name', '') if project else ''
-        description = project.get('description', []) if project else []
+        
+        title = project.get('title', '') if project else ''
+        description = project.get('description', '') if project else ''
         technologies = project.get('technologies', []) if project else []
         
-        # Use actual project name if available, otherwise use descriptive language
-        if name and name.strip() and name != 'Project':
-            proj_str = f"- {name} Project"
+        # Determine project context based on content and title
+        if title and title.strip():
+            # Check if it's likely an academic/work/personal project based on title and description
+            title_lower = title.lower()
+            desc_lower = description.lower() if description else ''
+            
+            if ('internship' in title_lower or 'end of year' in title_lower or 
+                'student' in title_lower or 'entrepreneur' in title_lower):
+                # Academic/internship project
+                proj_str = f"- Academic project ({title})"
+            elif any(keyword in desc_lower for keyword in ['built', 'developed', 'created']):
+                # Personal development project
+                proj_str = f"- Personal project ({title})"
+            else:
+                # Use project title directly
+                proj_str = f"- {title} project"
         else:
-            # Use more natural descriptions instead of generic naming
-            project_descriptors = ["Academic project", "Personal project", "Development project"]
-            proj_str = f"- {project_descriptors[i % len(project_descriptors)]}"
+            # Default to development project
+            proj_str = f"- Development project"
         
         if description:
-            proj_str += f": {description[0]}"
+            proj_str += f": {description}"
         if technologies:
             proj_str += f" (Technologies: {', '.join(technologies[:3])})"
         formatted.append(proj_str)
@@ -151,7 +166,7 @@ def get_email_prompt(resume_data: dict, internship_data: dict, additional_info: 
         internship_data = {}
     
     personal_info = resume_data.get('personal_information', {}) if resume_data else {}
-    experience = resume_data.get('experience', []) if resume_data else []
+    experience = resume_data.get('professional_experience', []) if resume_data else []
     education = resume_data.get('education', []) if resume_data else []
     skills = resume_data.get('skills', []) if resume_data else []
     
@@ -222,8 +237,14 @@ CRITICAL REQUIREMENTS:
 - End the email with "Best regards," only
 - When in doubt, be more generic rather than inventing false details
 - NEVER use generic project names like "Project A", "Project B", "Project C", etc.
-- If referring to projects, use natural language like "in one of my projects", "during a recent project", or mention the actual project name if provided
+- When referring to projects, use contextual descriptions:
+  * For company projects: "in a project I worked on at [Company Name]"
+  * For academic projects: "in an academic project I developed"
+  * For personal projects: "in a personal project I created"
+  * If project has a specific name: "in my [Project Name] project"
+- When mentioning work experience, reference the company naturally: "during my time at [Company Name]"
 - Avoid alphabetical or numerical project labeling completely
+- Always provide context about WHERE the project/experience took place
 
 Generate the email now:
 """
@@ -249,9 +270,9 @@ def get_cover_letter_prompt(resume_data: dict, internship_data: dict, additional
     # Handle None or missing internship data
     if not internship_data:
         internship_data = {}
-    
+
     personal_info = resume_data.get('personal_information', {}) if resume_data else {}
-    experience = resume_data.get('experience', []) if resume_data else []
+    experience = resume_data.get('professional_experience', []) if resume_data else []
     education = resume_data.get('education', []) if resume_data else []
     skills = resume_data.get('skills', []) if resume_data else []
     projects = resume_data.get('projects', []) if resume_data else []
@@ -356,9 +377,15 @@ CRITICAL REQUIREMENTS:
 - Start with the date and company address, skip personal header
 - End with "Sincerely," only
 - NEVER use generic project names like "Project A", "Project B", "Project C", "Project D", etc.
-- When referring to projects, use natural language such as "in one of my projects", "through a recent project", "during my academic work", or use the actual project name if provided
+- When referring to projects, use contextual descriptions with specific context:
+  * For company projects: "in a project I developed at [Company Name]" or "during my work at [Company Name]"
+  * For academic projects: "in an academic project I completed" or "through my coursework"
+  * For personal projects: "in a personal project I built" or "through my independent development work"
+  * If project has a specific name: "in my [Project Name] development"
+- When mentioning work experience, always reference the company context: "in my role at [Company Name]"
 - Completely avoid alphabetical or numerical project labeling (A, B, C, D, 1, 2, 3, etc.)
-- If multiple projects exist, refer to them as "various projects", "several projects", or "my project work"
+- If multiple projects exist, use contextual references: "across various company projects", "through multiple academic assignments", "in my development portfolio"
+- Always provide WHERE and WHAT CONTEXT the experience/project happened
 
 Generate the cover letter now:
 """
@@ -463,7 +490,7 @@ def call_groq_api(prompt: str, max_tokens: int = 1000) -> Tuple[bool, str]:
         "messages": [
             {
                 "role": "system",
-                "content": "You are a professional career counselor and expert writer specializing in job applications. Generate high-quality, tailored content that helps candidates stand out. CRITICAL RULES: 1) Only use factual information provided in the prompt. Never fabricate experiences, projects, achievements, or statistics. 2) NEVER use generic project names like 'Project A', 'Project B', 'Project C', etc. Instead use natural language like 'in one of my projects', 'through my project work', or the actual project name if provided. 3) If insufficient information is provided, focus on transferable skills, enthusiasm to learn, and general qualifications."
+                "content": "You are a professional career counselor and expert writer specializing in job applications. Generate high-quality, tailored content that helps candidates stand out. CRITICAL RULES: 1) Only use factual information provided in the prompt. Never fabricate experiences, projects, achievements, or statistics. 2) NEVER use generic project names like 'Project A', 'Project B', 'Project C', etc. Instead use contextual descriptions: 'in a project I developed at [Company Name]', 'in an academic project I completed', 'in a personal project I built', or use the actual project name if provided. 3) Always specify the context/location of experiences (company name for work projects, 'academic' for school projects, etc.). 4) If insufficient information is provided, focus on transferable skills, enthusiasm to learn, and general qualifications."
             },
             {
                 "role": "user", 
@@ -615,6 +642,179 @@ Best regards,
 {personal_info.get('name', '[Your Name]')}
 {personal_info.get('phone', '[Your Phone]')}
 {personal_info.get('email', '[Your Email]')}"""
+
+def get_custom_qa_prompt(resume_data: dict, internship_data: dict, custom_questions: str, additional_info: str = "") -> str:
+    """
+    Create prompt for answering custom interview questions based on resume and job description
+    """
+    if not resume_data:
+        resume_data = {}
+    if not internship_data:
+        internship_data = {}
+
+    personal_info = resume_data.get('personal_information', {}) if resume_data else {}
+    experience = resume_data.get('professional_experience', []) if resume_data else []
+    education = resume_data.get('education', []) if resume_data else []
+    skills = resume_data.get('skills', []) if resume_data else []
+    projects = resume_data.get('projects', []) if resume_data else []
+
+    # Ensure all data types are correct
+    if personal_info is None:
+        personal_info = {}
+    if experience is None:
+        experience = []
+    if education is None:
+        education = []
+    if skills is None:
+        skills = []
+    if projects is None:
+        projects = []
+
+    try:
+        education_str = format_education_for_prompt(education)
+        experience_str = format_experience_for_prompt(experience)
+        projects_str = format_projects_for_prompt(projects)
+        skills_str = ', '.join(skills[:15]) if skills else 'Not specified'
+    except Exception as e:
+        education_str = "No education data available"
+        experience_str = "No experience data available"
+        projects_str = "No projects data available"
+        skills_str = "No skills data available"
+
+    prompt = f"""
+You are an expert interview coach helping a candidate prepare perfect answers for specific interview questions they received after submitting their application.
+
+IMPORTANT RULES:
+- ONLY use factual information from the candidate's resume below
+- DO NOT invent or fabricate any experiences, projects, achievements, or statistics
+- Provide confident, detailed answers using only real information from the resume
+- If the candidate lacks certain experience, acknowledge it honestly but highlight transferable skills and learning ability
+- Make answers 2-3 sentences long - detailed but concise
+- Keep answers professional and interview-appropriate
+- Reference specific examples from the candidate's actual background when possible
+- NEVER use generic project names like "Project A", "Project B", etc.
+- When mentioning projects or experience, provide context:
+  * For company work: "in my role at [Company Name]" or "during my time at [Company Name]"
+  * For academic projects: "in an academic project I developed" or "through my coursework"
+  * For personal projects: "in a personal project I created"
+  * Use actual project names when available
+- Always specify WHERE the experience or project took place for natural, contextual answers
+
+CANDIDATE'S ACTUAL BACKGROUND:
+
+EDUCATION:
+{education_str}
+
+WORK EXPERIENCE:
+{experience_str}
+
+PROJECTS:
+{projects_str}
+
+TECHNICAL SKILLS:
+{skills_str}
+
+JOB DETAILS:
+- Position: {internship_data.get('job_title', 'Position')}
+- Company: {internship_data.get('company_name', 'Company')}
+- Job Description: {(internship_data.get('job_description') or '')[:1000]}
+- Additional Requirements: {additional_info[:300] if additional_info else 'None specified'}
+
+INTERVIEW QUESTIONS TO ANSWER:
+{custom_questions}
+
+For each question above, provide a perfect answer based STRICTLY on the candidate's actual resume and the job requirements. Format your response as:
+
+Q1: [First question from the list]
+A1: [Perfect answer using only factual information from the resume]
+
+Q2: [Second question from the list]
+A2: [Perfect answer using only factual information from the resume]
+
+[Continue for all questions provided]
+
+CRITICAL: Base all answers on the candidate's actual resume information above. Do not invent experiences or achievements.
+
+Generate the answers now:
+"""
+    return prompt
+
+def generate_custom_qa_content(resume_data: dict, internship_data: dict, custom_questions: str, additional_info: str = "") -> Tuple[bool, str]:
+    """
+    Generate answers for custom interview questions using AI
+    
+    Args:
+        resume_data: User's resume information
+        internship_data: Job/internship details
+        custom_questions: User's actual interview questions
+        additional_info: Additional job requirements (optional)
+        
+    Returns:
+        Tuple of (success: bool, qa_content: str)
+    """
+    
+    # Clean inputs
+    additional_info = additional_info.strip() if additional_info else ""
+    custom_questions = custom_questions.strip() if custom_questions else ""
+    
+    # Validate inputs
+    if not custom_questions:
+        return False, "Please enter the interview questions you received."
+    
+    if not has_sufficient_resume_data(resume_data):
+        return False, "Please add more details to your resume (education, skills, experience, or projects) for better answer generation quality."
+    
+    try:
+        prompt = get_custom_qa_prompt(resume_data, internship_data, custom_questions, additional_info)
+        
+        # Add extra validation reminder
+        prompt += "\n\nCRITICAL REMINDER: Base all answers on the candidate's actual resume information above. Do not invent experiences or achievements."
+        
+        success, ai_content = call_groq_api(prompt, max_tokens=2000)
+        
+        if success:
+            return True, ai_content
+        else:
+            return False, ai_content
+            
+    except Exception as e:
+        return False, f"Error generating Q&A answers: {str(e)}"
+
+def create_fallback_qa(resume_data: dict, internship_data: dict, additional_info: str = "") -> str:
+    """
+    Create fallback Q&A when AI is unavailable
+    """
+    if not resume_data:
+        resume_data = {}
+    if not internship_data:
+        internship_data = {}
+    
+    personal_info = resume_data.get('personal_information', {})
+    education = resume_data.get('education', [])
+    experience = resume_data.get('experience', [])
+    skills = resume_data.get('skills', [])
+    
+    job_title = internship_data.get('job_title', 'this position')
+    company_name = internship_data.get('company_name', 'this company')
+    
+    return f"""FALLBACK Q&A TEMPLATE - Please add more resume details for better AI generation
+
+Q1: Tell me about yourself.
+A1: I am a {education[0].get('degree', 'motivated professional') if education else 'dedicated individual'} with expertise in {skills[0] if skills else 'various technologies'}. {f"My experience includes {experience[0].get('role', 'professional work')}" if experience else "I have developed strong foundational skills through my education and projects"}, and I'm passionate about applying my skills in a {job_title} role.
+
+Q2: Why are you interested in this position at {company_name}?
+A2: I'm drawn to this {job_title} position because it aligns perfectly with my background in {skills[0] if skills else 'technology'} and my career goals. {company_name} has an excellent reputation, and I'm excited about the opportunity to contribute to your team while continuing to develop my skills.
+
+Q3: What are your strongest technical skills?
+A3: My strongest technical skills include {', '.join(skills[:3]) if skills else 'problem-solving, analytical thinking, and quick learning'}. {f"I've applied these skills in {experience[0].get('role', 'various projects')}" if experience else "I've developed these through my academic work and personal projects"}, which has prepared me well for this role.
+
+Q4: Describe a challenging project you've worked on.
+A4: {f"In my role at {experience[0].get('organization', 'a previous organization')}, I worked on {experience[0].get('achievements', ['challenging development work'])[0] if experience and experience[0].get('achievements') else 'challenging development work'}." if experience else "Through my academic coursework and personal development projects, I've tackled various technical challenges."} This experience taught me the importance of perseverance, problem-solving, and effective communication.
+
+Q5: Where do you see yourself in 5 years?
+A5: In five years, I see myself as an experienced professional in {skills[0] if skills else 'technology'}, having grown significantly from this {job_title} opportunity. I aim to have contributed meaningfully to projects at {company_name} while developing advanced skills and taking on increased responsibilities.
+
+💡 **Note**: This is a basic template. Upload more detailed resume information for personalized, AI-generated Q&A based on your actual experience and the specific job requirements."""
 
 def create_fallback_cover_letter(resume_data: dict, internship_data: dict, additional_info: str = "") -> str:
     """
