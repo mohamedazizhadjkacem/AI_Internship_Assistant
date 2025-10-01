@@ -408,3 +408,60 @@ class SupabaseDB:
         except Exception as e:
             print(f"Error updating Telegram config: {e}")
             return False
+
+    def change_user_password(self, current_password, new_password):
+        """Changes the password for the currently authenticated user."""
+        try:
+            # First verify the current password by attempting to sign in
+            current_user = self.client.auth.get_user()
+            if not current_user or not current_user.user:
+                return {"error": "No authenticated user found. Please log in again."}
+            
+            user_email = current_user.user.email
+            
+            # Verify current password by attempting to sign in
+            try:
+                verify_res = self.client.auth.sign_in_with_password({
+                    "email": user_email, 
+                    "password": current_password
+                })
+                if not verify_res or not verify_res.user:
+                    return {"error": "Current password is incorrect."}
+            except Exception:
+                return {"error": "Current password is incorrect."}
+            
+            # Update to new password
+            update_res = self.client.auth.update_user({
+                "password": new_password
+            })
+            
+            if update_res and update_res.user:
+                return {"success": True, "message": "Password changed successfully!"}
+            else:
+                return {"error": "Failed to update password. Please try again."}
+                
+        except Exception as e:
+            print(f"Error changing password: {e}")
+            return {"error": f"An error occurred: {str(e)}"}
+
+    def reset_password(self, email):
+        """Sends a password reset email to the specified email address."""
+        try:
+            # Send password reset email
+            reset_res = self.client.auth.reset_password_email(email)
+            
+            # Supabase doesn't return detailed response for reset_password_email for security
+            # We assume success if no exception is thrown
+            return {"success": True, "message": f"Password reset email sent to {email}. Please check your inbox."}
+            
+        except Exception as e:
+            print(f"Error sending reset email: {e}")
+            error_message = str(e).lower()
+            
+            # Handle common error cases
+            if "invalid" in error_message or "not found" in error_message:
+                return {"error": "Email address not found in our system."}
+            elif "rate" in error_message or "too many" in error_message:
+                return {"error": "Too many reset attempts. Please wait before trying again."}
+            else:
+                return {"error": "Failed to send reset email. Please try again later."}

@@ -10,6 +10,7 @@ from views.scraper_view import show_scraper_page
 from views.telegram_settings_view import show_telegram_settings_page
 from views.resume_view import show_resume_page
 from views.ai_generator_view import show_ai_generator_page
+from views.settings_view import show_settings_page
 
 st.set_page_config(page_title="AI Internship Assistant", layout="wide")
 
@@ -105,9 +106,18 @@ if not st.session_state.logged_in:
                 if submitted:
                     handle_login(email, password)
             
-            if st.button("Don't have an account? Register", use_container_width=True):
-                st.session_state.page = 'Register'
-                st.rerun()
+            # Login page buttons
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("Don't have an account? Register", use_container_width=True):
+                    st.session_state.page = 'Register'
+                    st.rerun()
+            
+            with col2:
+                if st.button("🔑 Forgot Password?", use_container_width=True, type="secondary"):
+                    st.session_state.page = 'ForgotPassword'
+                    st.rerun()
 
         elif st.session_state.page == 'Register':
             st.header("Create an Account")
@@ -126,6 +136,10 @@ if not st.session_state.logged_in:
                 st.session_state.page = 'Login'
                 st.rerun()
 
+        elif st.session_state.page == 'ForgotPassword':
+            from views.settings_view import show_forgot_password_form
+            show_forgot_password_form()
+
 # --- MAIN APPLICATION VIEW ---
 else:
     # --- SIDEBAR NAVIGATION ---
@@ -137,6 +151,7 @@ else:
         "Run Scrapper": {"icon": "⚙️", "function": show_scraper_page},
         "AI Content Generator": {"icon": "🤖", "function": show_ai_generator_page},
         "Resume Manager": {"icon": "📄", "function": show_resume_page},
+        "Settings": {"icon": "⚙️", "function": show_settings_page},
         "Telegram Settings": {"icon": "🔧", "function": show_telegram_settings_page},
         "Application History": {"icon": "📋", "function": show_history_page}
     }
