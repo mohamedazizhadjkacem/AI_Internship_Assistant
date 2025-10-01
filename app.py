@@ -46,13 +46,51 @@ defaults = {
     'continuous_search_active': False,
     'search_thread': None,
     'delete_success': False,  # Add this for delete confirmation handling
-    'force_refresh': False  # Flag to force data refresh
+    'force_refresh': False,  # Flag to force data refresh
+    'password_recovery_mode': False,  # Track if in password recovery
+    'recovery_checked': False  # Track if we've checked for recovery
 }
 
 # Initialize any missing session state variables with defaults
 for key, value in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = value
+
+# Check for password recovery flow
+def check_password_recovery():
+    """Check if user came from password reset email and handle accordingly."""
+    try:
+        # Get URL parameters
+        query_params = st.query_params
+        
+        # Check if this is a password recovery callback
+        if 'type' in query_params and query_params['type'] == 'recovery':
+            # User clicked password reset link
+            st.session_state.page = 'SetNewPassword'
+            st.session_state.password_recovery_mode = True
+            
+            # Try to get the current user (should be auto-signed in by Supabase)
+            try:
+                current_user = db.client.auth.get_user()
+                if current_user and current_user.user:
+                    st.session_state.recovery_user_id = current_user.user.id
+                    st.session_state.recovery_email = current_user.user.email
+            except:
+                # If we can't get user, redirect to login with error
+                st.session_state.page = 'Login'
+                st.session_state.password_recovery_error = "Password reset session expired. Please try again."
+            
+            return True
+            
+    except Exception as e:
+        print(f"Error checking password recovery: {e}")
+        
+    return False
+
+# Check for password recovery on app load
+if not hasattr(st.session_state, 'recovery_checked'):
+    st.session_state.recovery_checked = True
+    check_password_recovery()
 
 # --- HANDLER FUNCTIONS ---
 def handle_login(email, password):
@@ -99,6 +137,17 @@ if not st.session_state.logged_in:
     with col2:
         if st.session_state.page == 'Login':
             st.header("Welcome Back!")
+            
+            # Show success message if user just reset password
+            if hasattr(st.session_state, 'password_reset_success') and st.session_state.password_reset_success:
+                st.success("🎉 Password reset successfully! Please log in with your new password.")
+                del st.session_state.password_reset_success
+            
+            # Show error if recovery failed
+            if hasattr(st.session_state, 'password_recovery_error'):
+                st.error(st.session_state.password_recovery_error)
+                del st.session_state.password_recovery_error
+            
             with st.form("login_form"):
                 email = st.text_input("Email", placeholder="Enter your email")
                 password = st.text_input("Password", type="password", placeholder="Enter your password")
@@ -139,6 +188,10 @@ if not st.session_state.logged_in:
         elif st.session_state.page == 'ForgotPassword':
             from views.settings_view import show_forgot_password_form
             show_forgot_password_form()
+
+        elif st.session_state.page == 'SetNewPassword':
+            from views.settings_view import show_set_new_password_form
+            show_set_new_password_form()
 
 # --- MAIN APPLICATION VIEW ---
 else:

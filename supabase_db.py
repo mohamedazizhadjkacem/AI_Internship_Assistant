@@ -465,3 +465,21 @@ class SupabaseDB:
                 return {"error": "Too many reset attempts. Please wait before trying again."}
             else:
                 return {"error": "Failed to send reset email. Please try again later."}
+
+    def set_new_password_after_recovery(self, new_password):
+        """Sets a new password for user after password recovery (no current password needed)."""
+        try:
+            # In recovery mode, user is already authenticated by Supabase
+            # We just need to update their password
+            update_res = self.client.auth.update_user({
+                "password": new_password
+            })
+            
+            if update_res and update_res.user:
+                return {"success": True, "message": "Password set successfully! You can now log in with your new password."}
+            else:
+                return {"error": "Failed to set new password. Please try the reset process again."}
+                
+        except Exception as e:
+            print(f"Error setting new password: {e}")
+            return {"error": f"An error occurred while setting your new password: {str(e)}"}

@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 from supabase_db import SupabaseDB
 
 def show_settings_page():
@@ -187,8 +188,8 @@ def show_forgot_password_form():
                     st.info("💡 **Next Steps:**")
                     st.info("1. Check your email inbox (and spam folder)")
                     st.info("2. Click the reset link in the email")  
-                    st.info("3. Follow the instructions to set a new password")
-                    st.info("4. Return here and log in with your new password")
+                    st.info("3. You'll be redirected here to set a new password")
+                    st.info("4. Log in with your new password")
                 else:
                     st.error("❌ " + result.get("error"))
                     
@@ -201,3 +202,105 @@ def show_forgot_password_form():
         if 'show_forgot_password' in st.session_state:
             del st.session_state.show_forgot_password
         st.rerun()
+
+def show_set_new_password_form():
+    """Shows the form to set a new password after recovery."""
+    st.header("🔒 Set Your New Password")
+    st.success("✅ Password reset verified! Please set your new password below.")
+    
+    # Show user info if available
+    if hasattr(st.session_state, 'recovery_email'):
+        st.info(f"Setting new password for: **{st.session_state.recovery_email}**")
+    
+    db = SupabaseDB()
+    
+    with st.form("set_new_password_form"):
+        new_password = st.text_input(
+            "New Password", 
+            type="password", 
+            placeholder="Enter your new password"
+        )
+        
+        confirm_password = st.text_input(
+            "Confirm New Password", 
+            type="password", 
+            placeholder="Confirm your new password"
+        )
+        
+        # Password requirements
+        st.markdown("**Password Requirements:**")
+        st.markdown("- At least 8 characters long")
+        st.markdown("- Contains at least one uppercase letter")
+        st.markdown("- Contains at least one lowercase letter") 
+        st.markdown("- Contains at least one number")
+        
+        submitted = st.form_submit_button("🔐 Set New Password", use_container_width=True, type="primary")
+        
+        if submitted:
+            # Validation
+            if not all([new_password, confirm_password]):
+                st.error("Please fill in both password fields.")
+                return
+                
+            if new_password != confirm_password:
+                st.error("Passwords do not match.")
+                return
+                
+            if len(new_password) < 8:
+                st.error("Password must be at least 8 characters long.")
+                return
+                
+            if not any(c.isupper() for c in new_password):
+                st.error("Password must contain at least one uppercase letter.")
+                return
+                
+            if not any(c.islower() for c in new_password):
+                st.error("Password must contain at least one lowercase letter.")
+                return
+                
+            if not any(c.isdigit() for c in new_password):
+                st.error("Password must contain at least one number.")
+                return
+            
+            # Attempt to set new password
+            try:
+                with st.spinner("Setting your new password..."):
+                    result = db.set_new_password_after_recovery(new_password)
+                    
+                if result.get("success"):
+                    st.success("🎉 " + result.get("message"))
+                    st.balloons()
+                    
+                    # Clear recovery state and redirect to login
+                    time.sleep(2)  # Give user time to see success message
+                    
+                    # Clean up recovery session state
+                    recovery_keys = [key for key in st.session_state.keys() if 'recovery' in key]
+                    for key in recovery_keys:
+                        del st.session_state[key]
+                    
+                    st.session_state.page = 'Login'
+                    st.session_state.password_reset_success = True
+                    st.rerun()
+                else:
+                    st.error("❌ " + result.get("error"))
+                    
+            except Exception as e:
+                st.error(f"An unexpected error occurred: {e}")
+
+    st.divider()
+    
+    # Help section
+    with st.expander("❓ Need Help?", expanded=False):
+        st.markdown("**Having trouble?**")
+        st.markdown("- Make sure your password meets all requirements above")
+        st.markdown("- If this page doesn't work, the reset link may have expired")
+        st.markdown("- You can request a new password reset from the login page")
+        
+        if st.button("🔄 Start Over - Go to Login", use_container_width=True):
+            # Clean up recovery state
+            recovery_keys = [key for key in st.session_state.keys() if 'recovery' in key]
+            for key in recovery_keys:
+                del st.session_state[key]
+            st.session_state.page = 'Login'
+            st.rerun()
