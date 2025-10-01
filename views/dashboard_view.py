@@ -695,26 +695,35 @@ def show_dashboard_page():
                         from pdf_generator import create_cover_letter_pdf, generate_pdf_filename
                         
                         try:
-                            pdf_data = create_cover_letter_pdf(
-                                content=cover_content,
-                                applicant_name=user_name,
-                                job_title=internship.get('title', ''),
-                                company_name=internship.get('company', '')
-                            )
-                            
-                            filename = generate_pdf_filename(
-                                applicant_name=user_name,
-                                job_title=internship.get('title', ''),
-                                company_name=internship.get('company', '')
-                            )
-                            
-                            st.download_button(
-                                label="📄 Download PDF",
-                                data=pdf_data,
-                                file_name=filename,
-                                mime="application/pdf",
-                                key=f"download_cover_{internship['id']}"
-                            )
+                            # Ensure we have valid data for PDF generation
+                            if cover_content and cover_content.strip():
+                                pdf_data = create_cover_letter_pdf(
+                                    content=cover_content,
+                                    applicant_name=user_name or "Applicant",
+                                    job_title=internship.get('title', '') or internship.get('job_title', 'Position'),
+                                    company_name=internship.get('company', '') or internship.get('company_name', 'Company')
+                                )
+                                
+                                filename = generate_pdf_filename(
+                                    applicant_name=user_name or "Applicant",
+                                    job_title=internship.get('title', '') or internship.get('job_title', 'Position'),
+                                    company_name=internship.get('company', '') or internship.get('company_name', 'Company')
+                                )
+                                
+                                st.download_button(
+                                    label="📄 Download PDF",
+                                    data=pdf_data,
+                                    file_name=filename,
+                                    mime="application/pdf",
+                                    key=f"download_cover_{internship['id']}",
+                                    use_container_width=True
+                                )
+                            else:
+                                st.button("📄 Download PDF", disabled=True, use_container_width=True, help="Generate a cover letter first")
+                                
+                        except ImportError as e:
+                            st.error("📄 PDF generation unavailable: Missing required libraries.")
+                            st.code("pip install reportlab", language="bash")
                         except Exception as e:
-                            st.error(f"Error generating PDF: {str(e)}")
-                            st.info("💡 Note: PDF generation requires the 'reportlab' package. Please install it to use this feature.")
+                            st.error(f"❌ Error generating PDF: {str(e)}")
+                            st.info("💡 Try generating the cover letter again or check your resume data.")

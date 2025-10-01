@@ -10,9 +10,16 @@ from views.scraper_view import show_scraper_page
 from views.telegram_settings_view import show_telegram_settings_page
 from views.resume_view import show_resume_page
 from views.ai_generator_view import show_ai_generator_page
-from views.settings_view import show_settings_page
 
 st.set_page_config(page_title="AI Internship Assistant", layout="wide")
+
+# Check for email confirmation in URL parameters
+query_params = st.query_params
+if "confirmed" in query_params:
+    if query_params["confirmed"] == "true":
+        st.success("🎉 Email confirmed successfully! You can now log in with your credentials.")
+        # Clear the URL parameter after showing the message
+        st.query_params.clear()
 
 # --- DATABASE INITIALIZATION ---
 try:
@@ -47,8 +54,11 @@ defaults = {
     'search_thread': None,
     'delete_success': False,  # Add this for delete confirmation handling
     'force_refresh': False,  # Flag to force data refresh
-    'password_recovery_mode': False,  # Track if in password recovery
-    'recovery_checked': False  # Track if we've checked for recovery
+    'registration_error': None,  # For handling registration errors outside forms
+    'registration_success': False,  # For handling registration success
+    'pending_confirmation_email': None,  # Track email awaiting confirmation
+    'login_error': None,  # For handling login errors
+
 }
 
 # Initialize any missing session state variables with defaults
@@ -56,77 +66,66 @@ for key, value in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
-# Check for password recovery flow
-def check_password_recovery():
-    """Check if user came from password reset email and handle accordingly."""
-    try:
-        # Get URL parameters
-        query_params = st.query_params
-        
-        # Check if this is a password recovery callback
-        if 'type' in query_params and query_params['type'] == 'recovery':
-            # User clicked password reset link
-            st.session_state.page = 'SetNewPassword'
-            st.session_state.password_recovery_mode = True
-            
-            # Try to get the current user (should be auto-signed in by Supabase)
-            try:
-                current_user = db.client.auth.get_user()
-                if current_user and current_user.user:
-                    st.session_state.recovery_user_id = current_user.user.id
-                    st.session_state.recovery_email = current_user.user.email
-            except:
-                # If we can't get user, redirect to login with error
-                st.session_state.page = 'Login'
-                st.session_state.password_recovery_error = "Password reset session expired. Please try again."
-            
-            return True
-            
-    except Exception as e:
-        print(f"Error checking password recovery: {e}")
-        
-    return False
 
-# Check for password recovery on app load
-if not hasattr(st.session_state, 'recovery_checked'):
-    st.session_state.recovery_checked = True
-    check_password_recovery()
 
 # --- HANDLER FUNCTIONS ---
 def handle_login(email, password):
     if not email or not password:
-        st.error("Please enter both email and password.")
+        st.session_state.login_error = "Please enter both email and password."
         return
-    result = db.sign_in_user(email, password)
+    
+    with st.spinner("Signing you in..."):
+        result = db.sign_in_user(email, password)
+    
     if "error" not in result:
         st.session_state.logged_in = True
         st.session_state.user_session = result['session']
         st.session_state.user_id = result['session'].user.id
         profile = db.get_user_profile()
         st.session_state.username = profile.get('username', email) if profile else email
+        st.session_state.login_error = None  # Clear any login errors
         # Load internships after successful login
         load_internships()
         st.success("Logged in successfully!")
         time.sleep(1)
         st.rerun()
     else:
-        st.error(result["error"])
+        error_msg = result["error"]
+        if "confirm your email" in error_msg.lower():
+            st.session_state.login_error = error_msg
+            st.session_state.pending_confirmation_email = email
+        else:
+            st.session_state.login_error = error_msg
+            st.session_state.pending_confirmation_email = None
 
 def handle_register(email, password, confirm_password, username, telegram_bot_token, telegram_chat_id):
+    # Validation checks
     if password != confirm_password:
-        st.error("Passwords do not match.")
-        return
+        st.session_state.registration_error = "Passwords do not match."
+        return False
     if not all([email, password, confirm_password, username, telegram_bot_token, telegram_chat_id]):
-        st.error("Please fill in all fields.")
-        return
-    result = db.sign_up_user(email, password, username, telegram_bot_token, telegram_chat_id)
+        st.session_state.registration_error = "Please fill in all fields."
+        return False
+    
+    # Show loading message for user feedback
+    with st.spinner("Creating your account..."):
+        result = db.sign_up_user(email, password, username, telegram_bot_token, telegram_chat_id)
+    
     if "error" not in result:
-        st.success("Registration successful! Please check your email to confirm your account and then login.")
-        st.session_state.page = 'Login'
-        time.sleep(2)
-        st.rerun()
+        st.session_state.registration_success = True
+        st.session_state.registration_error = None
+        st.session_state.pending_confirmation_email = email  # Track email for confirmation
+        return True
     else:
-        st.error(result["error"])
+        error_msg = result["error"]
+        # Store user-friendly error messages in session state
+        if "Account creation conflict detected" in error_msg:
+            st.session_state.registration_error = "⚠️ There was a conflict creating your account. This might be due to a previous incomplete registration. Please try again in a few moments, or contact support if the problem persists."
+        elif "already registered" in error_msg.lower():
+            st.session_state.registration_error = "📧 This email is already registered. Please try logging in instead, or use a different email address."
+        else:
+            st.session_state.registration_error = f"❌ Registration failed: {error_msg}"
+        return False
 
 # --- UI RENDERING ---
 
@@ -138,15 +137,13 @@ if not st.session_state.logged_in:
         if st.session_state.page == 'Login':
             st.header("Welcome Back!")
             
-            # Show success message if user just reset password
-            if hasattr(st.session_state, 'password_reset_success') and st.session_state.password_reset_success:
-                st.success("🎉 Password reset successfully! Please log in with your new password.")
-                del st.session_state.password_reset_success
+
             
-            # Show error if recovery failed
-            if hasattr(st.session_state, 'password_recovery_error'):
-                st.error(st.session_state.password_recovery_error)
-                del st.session_state.password_recovery_error
+
+            
+
+      
+
             
             with st.form("login_form"):
                 email = st.text_input("Email", placeholder="Enter your email")
@@ -155,21 +152,64 @@ if not st.session_state.logged_in:
                 if submitted:
                     handle_login(email, password)
             
-            # Login page buttons
-            col1, col2 = st.columns(2)
+            # Handle login errors outside the form
+            if getattr(st.session_state, 'login_error', None):
+                st.error(st.session_state.login_error)
+                
+                # If email confirmation is pending, show resend option
+                pending_email = getattr(st.session_state, 'pending_confirmation_email', None)
+                if pending_email and "confirm your email" in st.session_state.login_error.lower():
+                    st.info("💡 **Haven't received the confirmation email?**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("📧 Resend Confirmation Email", key="resend_confirmation"):
+                            with st.spinner("Resending confirmation email..."):
+                                resend_result = db.resend_confirmation_email(pending_email)
+                            if "success" in resend_result:
+                                st.success("✅ Confirmation email sent! Please check your inbox.")
+                                st.session_state.login_error = None
+                            else:
+                                st.error(f"❌ Failed to resend email: {resend_result.get('error', 'Unknown error')}")
+                    with col2:
+                        if st.button("🔄 Try Login Again", key="retry_login"):
+                            st.session_state.login_error = None
+                            st.session_state.pending_confirmation_email = None
+                            st.rerun()
             
-            with col1:
-                if st.button("Don't have an account? Register", use_container_width=True):
-                    st.session_state.page = 'Register'
-                    st.rerun()
+            # Login page buttons - show only if no error or error is not email-related
+            if not getattr(st.session_state, 'login_error', None) or "confirm your email" not in getattr(st.session_state, 'login_error', '').lower():
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Don't have an account? Register", use_container_width=True):
+                        st.session_state.page = 'Register'
+                        st.session_state.login_error = None
+                        st.rerun()
             
-            with col2:
-                if st.button("🔑 Forgot Password?", use_container_width=True, type="secondary"):
-                    st.session_state.page = 'ForgotPassword'
-                    st.rerun()
-
         elif st.session_state.page == 'Register':
             st.header("Create an Account")
+            
+            # Handle registration success
+            if getattr(st.session_state, 'registration_success', False):
+                st.success("🎉 **Registration successful!**")
+                st.info("""
+                📧 **Next Steps:**
+                1. Check your email inbox (and spam folder)
+                2. Click the confirmation link in the email
+                3. Return here and log in with your credentials
+                
+                💡 The confirmation email may take a few minutes to arrive.
+                """)
+                
+                # Add button to go to login
+                if st.button("📝 Go to Login Page", use_container_width=True):
+                    st.session_state.page = 'Login'
+                    st.session_state.registration_success = False
+                    st.rerun()
+                
+                # Don't auto-redirect, let user read the instructions
+                st.stop()
+            
+            # Registration form
             with st.form("register_form"):
                 username = st.text_input("Username", placeholder="Choose a username")
                 email = st.text_input("Email", placeholder="Enter your email")
@@ -180,18 +220,29 @@ if not st.session_state.logged_in:
                 submitted = st.form_submit_button("Register", use_container_width=True)
                 if submitted:
                     handle_register(email, password, confirm_password, username, telegram_bot_token, telegram_chat_id)
+            
+            # Handle registration errors outside the form
+            if getattr(st.session_state, 'registration_error', None):
+                st.error(st.session_state.registration_error)
+                
+                # Provide helpful action buttons outside the form
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Try Again", key="retry_register"):
+                        st.session_state.registration_error = None
+                        st.rerun()
+                with col2:
+                    if st.button("🔙 Back to Login", key="back_to_login"):
+                        st.session_state.page = 'Login'
+                        st.session_state.registration_error = None
+                        st.rerun()
+            else:
+                # Show login link only if no error
+                if st.button("Already have an account? Login", use_container_width=True):
+                    st.session_state.page = 'Login'
+                    st.rerun()
 
-            if st.button("Already have an account? Login", use_container_width=True):
-                st.session_state.page = 'Login'
-                st.rerun()
 
-        elif st.session_state.page == 'ForgotPassword':
-            from views.settings_view import show_forgot_password_form
-            show_forgot_password_form()
-
-        elif st.session_state.page == 'SetNewPassword':
-            from views.settings_view import show_set_new_password_form
-            show_set_new_password_form()
 
 # --- MAIN APPLICATION VIEW ---
 else:
@@ -204,7 +255,6 @@ else:
         "Run Scrapper": {"icon": "⚙️", "function": show_scraper_page},
         "AI Content Generator": {"icon": "🤖", "function": show_ai_generator_page},
         "Resume Manager": {"icon": "📄", "function": show_resume_page},
-        "Settings": {"icon": "⚙️", "function": show_settings_page},
         "Telegram Settings": {"icon": "🔧", "function": show_telegram_settings_page},
         "Application History": {"icon": "📋", "function": show_history_page}
     }

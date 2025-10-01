@@ -35,10 +35,62 @@ class SupabaseDB:
             print(f"Supabase initialization error: {str(e)}")
             raise ConnectionError(f"Failed to initialize Supabase client: {e}") from e
 
+    def _clean_orphaned_records_by_email(self, email):
+        """Clean up any orphaned profile/subscription records for the given email."""
+        try:
+            # First, try to find if there are any auth users with this email
+            existing_users = self.client.auth.admin.list_users()
+            user_ids_to_clean = []
+            
+            # Check if email exists in auth but might have orphaned records
+            for auth_user in existing_users.users if hasattr(existing_users, 'users') else []:
+                if auth_user.email == email:
+                    # Check if this user has a valid profile
+                    try:
+                        profile_check = self.client.table('profiles').select('id').eq('id', auth_user.id).execute()
+                        if profile_check.data:
+                            # User exists properly, don't clean
+                            continue
+                    except Exception:
+                        pass
+                    user_ids_to_clean.append(auth_user.id)
+            
+            # Also check for any profiles without corresponding auth users
+            try:
+                # Get profiles that might be orphaned
+                profiles = self.client.table('profiles').select('id').execute()
+                for profile in profiles.data if profiles.data else []:
+                    try:
+                        # Check if auth user exists for this profile
+                        auth_check = self.client.auth.admin.get_user_by_id(profile['id'])
+                        if not auth_check or not getattr(auth_check, 'user', None):
+                            user_ids_to_clean.append(profile['id'])
+                    except Exception:
+                        # If we can't find the auth user, it's probably orphaned
+                        user_ids_to_clean.append(profile['id'])
+            except Exception:
+                pass
+                
+            # Clean up orphaned records
+            for user_id in set(user_ids_to_clean):  # Remove duplicates
+                try:
+                    self.client.table('profiles').delete().eq('id', user_id).execute()
+                except Exception:
+                    pass
+                try:
+                    self.client.table('subscriptions').delete().eq('id', user_id).execute()
+                except Exception:
+                    pass
+                    
+        except Exception as e:
+            print(f"Warning: Could not clean orphaned records for {email}: {e}")
+
     def sign_up_user(self, email, password, username, telegram_bot_token=None, telegram_chat_id=None):
         """Signs up a new user, creates their profile, and sets up a default subscription."""
         user = None
         try:
+            # Clean up any potential orphaned records first
+            self._clean_orphaned_records_by_email(email)
             # Validate Telegram Bot Token format
             if telegram_bot_token is not None:
                 token_pattern = r"^\d{9,10}:[A-Za-z0-9_-]{35,}$"
@@ -50,8 +102,16 @@ class SupabaseDB:
                 if not re.match(chat_id_pattern, str(telegram_chat_id)):
                     return {"error": "Invalid Telegram Chat ID format. It should be a number (can be negative for groups)."}
 
-            # 1. Create auth user
-            res = self.client.auth.sign_up({"email": email, "password": password})
+            # 1. Create auth user with proper redirect URL
+            # Set redirect URL to a simple confirmation page
+            signup_data = {
+                "email": email, 
+                "password": password,
+                "options": {
+                    "emailRedirectTo": "http://localhost:8501/?confirmed=true"
+                }
+            }
+            res = self.client.auth.sign_up(signup_data)
             user = res.user
             if not user:
                 return {"error": "Failed to create authentication user."}
@@ -99,6 +159,19 @@ class SupabaseDB:
             # Clean up created user if any part of the process fails
             if user and user.id:
                 try:
+                    # Clean up profile record if it exists
+                    try:
+                        self.client.table('profiles').delete().eq('id', user.id).execute()
+                    except Exception:
+                        pass
+                    
+                    # Clean up subscription record if it exists
+                    try:
+                        self.client.table('subscriptions').delete().eq('id', user.id).execute()
+                    except Exception:
+                        pass
+                    
+                    # Clean up auth user
                     user_check = None
                     try:
                         user_check = self.client.auth.admin.get_user_by_id(user.id)
@@ -111,11 +184,46 @@ class SupabaseDB:
                 except Exception as admin_e:
                     print(f"WARNING: Failed to clean up user {user.id} after sign-up error: {admin_e}")
 
-            if 'User already registered' in str(e):
+            # Handle specific error cases
+            error_str = str(e).lower()
+            if 'user already registered' in error_str or 'already registered' in error_str:
                 return {"error": "This email is already registered."}
-            if 'subscription_status' in str(e):
+            if 'duplicate key value violates unique constraint' in error_str and 'profiles_pkey' in error_str:
+                # Handle the specific duplicate profile ID error
+                return {"error": "Account creation conflict detected. Please try again or contact support if the problem persists."}
+            if 'subscription_status' in error_str:
                 return {"error": f"Database error: Invalid subscription status used. Details: {e}"}
             return {"error": f"An unexpected error occurred during sign-up: {e}"}
+
+    def check_user_email_confirmed(self, email):
+        """Check if user's email is confirmed."""
+        try:
+            # Get user by email
+            users = self.client.auth.admin.list_users()
+            for auth_user in users.users if hasattr(users, 'users') else []:
+                if auth_user.email == email:
+                    return {
+                        "confirmed": auth_user.email_confirmed_at is not None,
+                        "user_id": auth_user.id,
+                        "confirmation_sent_at": getattr(auth_user, 'confirmation_sent_at', None)
+                    }
+            return {"error": "User not found"}
+        except Exception as e:
+            return {"error": f"Error checking confirmation status: {str(e)}"}
+    
+    def resend_confirmation_email(self, email):
+        """Resend confirmation email to user."""
+        try:
+            self.client.auth.resend({
+                'type': 'signup',
+                'email': email,
+                'options': {
+                    'emailRedirectTo': "http://localhost:8501/?confirmed=true"
+                }
+            })
+            return {"success": True}
+        except Exception as e:
+            return {"error": f"Failed to resend confirmation email: {str(e)}"}
 
     def sign_in_user(self, email, password):
         """Signs in an existing user."""
@@ -123,7 +231,13 @@ class SupabaseDB:
             res = self.client.auth.sign_in_with_password({"email": email, "password": password})
             return {"success": True, "session": res.session}
         except Exception as e:
-            return {"error": "Invalid login credentials."}
+            error_str = str(e).lower()
+            if "email not confirmed" in error_str or "email_not_confirmed" in error_str:
+                return {"error": "Please confirm your email address before logging in. Check your inbox for a confirmation email."}
+            elif "invalid" in error_str:
+                return {"error": "Invalid email or password."}
+            else:
+                return {"error": "Login failed. Please check your credentials."}
 
     def get_user_profile(self, user_id=None):
         """Gets the profile of the specified user, or the currently authenticated user if user_id is None."""
@@ -443,43 +557,39 @@ class SupabaseDB:
         except Exception as e:
             print(f"Error changing password: {e}")
             return {"error": f"An error occurred: {str(e)}"}
-
-    def reset_password(self, email):
-        """Sends a password reset email to the specified email address."""
+    
+    def manual_cleanup_orphaned_records(self):
+        """Manual cleanup method for orphaned records. Use carefully."""
         try:
-            # Send password reset email
-            reset_res = self.client.auth.reset_password_email(email)
+            cleanup_count = 0
             
-            # Supabase doesn't return detailed response for reset_password_email for security
-            # We assume success if no exception is thrown
-            return {"success": True, "message": f"Password reset email sent to {email}. Please check your inbox."}
+            # Get all profiles
+            profiles = self.client.table('profiles').select('id').execute()
+            
+            for profile in profiles.data if profiles.data else []:
+                try:
+                    # Check if auth user exists for this profile
+                    auth_check = self.client.auth.admin.get_user_by_id(profile['id'])
+                    if not auth_check or not getattr(auth_check, 'user', None):
+                        # Orphaned profile, clean it up
+                        self.client.table('profiles').delete().eq('id', profile['id']).execute()
+                        self.client.table('subscriptions').delete().eq('id', profile['id']).execute()
+                        cleanup_count += 1
+                        print(f"Cleaned up orphaned records for user ID: {profile['id']}")
+                except Exception:
+                    # If we can't find the auth user, it's probably orphaned
+                    try:
+                        self.client.table('profiles').delete().eq('id', profile['id']).execute()
+                        self.client.table('subscriptions').delete().eq('id', profile['id']).execute()
+                        cleanup_count += 1
+                        print(f"Cleaned up orphaned records for user ID: {profile['id']}")
+                    except Exception as del_e:
+                        print(f"Could not clean up orphaned record {profile['id']}: {del_e}")
+                        
+            print(f"Manual cleanup completed. Cleaned {cleanup_count} orphaned records.")
+            return {"success": True, "cleaned": cleanup_count}
             
         except Exception as e:
-            print(f"Error sending reset email: {e}")
-            error_message = str(e).lower()
-            
-            # Handle common error cases
-            if "invalid" in error_message or "not found" in error_message:
-                return {"error": "Email address not found in our system."}
-            elif "rate" in error_message or "too many" in error_message:
-                return {"error": "Too many reset attempts. Please wait before trying again."}
-            else:
-                return {"error": "Failed to send reset email. Please try again later."}
+            print(f"Error during manual cleanup: {e}")
+            return {"error": f"Cleanup failed: {str(e)}"}
 
-    def set_new_password_after_recovery(self, new_password):
-        """Sets a new password for user after password recovery (no current password needed)."""
-        try:
-            # In recovery mode, user is already authenticated by Supabase
-            # We just need to update their password
-            update_res = self.client.auth.update_user({
-                "password": new_password
-            })
-            
-            if update_res and update_res.user:
-                return {"success": True, "message": "Password set successfully! You can now log in with your new password."}
-            else:
-                return {"error": "Failed to set new password. Please try the reset process again."}
-                
-        except Exception as e:
-            print(f"Error setting new password: {e}")
-            return {"error": f"An error occurred while setting your new password: {str(e)}"}

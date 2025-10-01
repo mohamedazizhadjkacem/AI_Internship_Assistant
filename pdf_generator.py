@@ -165,20 +165,38 @@ def generate_pdf_filename(applicant_name: str = "", job_title: str = "", company
         company_name: Company name
         
     Returns:
-        Formatted filename
+        Formatted filename (safe for HTTP headers)
     """
     
-    # Clean and format components
-    name_part = re.sub(r'[^\w\s-]', '', applicant_name).strip().replace(' ', '_') if applicant_name else "Cover_Letter"
-    job_part = re.sub(r'[^\w\s-]', '', job_title).strip().replace(' ', '_') if job_title else "Application"
-    company_part = re.sub(r'[^\w\s-]', '', company_name).strip().replace(' ', '_') if company_name else "Position"
+    # Helper function to clean and truncate text
+    def clean_and_truncate(text: str, max_length: int = 30) -> str:
+        if not text:
+            return ""
+        # Remove newlines and extra spaces first
+        text = ' '.join(text.split())
+        # Remove special characters except alphanumeric, spaces, and hyphens
+        text = re.sub(r'[^\w\s-]', '', text)
+        # Truncate if too long
+        text = text[:max_length] if len(text) > max_length else text
+        # Replace spaces with underscores
+        return text.strip().replace(' ', '_')
     
-    # Create filename
+    # Clean and format components with length limits
+    name_part = clean_and_truncate(applicant_name, 25) if applicant_name else "Applicant"
+    job_part = clean_and_truncate(job_title, 40) if job_title else "Position"
+    company_part = clean_and_truncate(company_name, 25) if company_name else "Company"
+    
+    # Create filename with length safety
     if applicant_name and job_title and company_name:
         filename = f"{name_part}_{job_part}_{company_part}_Cover_Letter.pdf"
     elif job_title and company_name:
         filename = f"Cover_Letter_{job_part}_{company_part}.pdf"
     else:
         filename = f"Cover_Letter_{datetime.now().strftime('%Y%m%d')}.pdf"
+    
+    # Final safety check - ensure total filename is reasonable
+    if len(filename) > 150:  # Reasonable limit for filenames
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        filename = f"{name_part}_Cover_Letter_{timestamp}.pdf"
     
     return filename

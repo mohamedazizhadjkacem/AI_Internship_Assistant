@@ -301,36 +301,50 @@ def display_generated_content(job_info: dict):
             
             # PDF download
             try:
-                cover_content = st.session_state['generated_cover_letter']
+                cover_content = st.session_state.get('generated_cover_letter', '')
                 
-                # Get user info for PDF
-                resume_data = st.session_state.get('resume', {})
-                personal_info = resume_data.get('personal_information', {})
-                user_name = personal_info.get('name', 'Applicant')
+                if cover_content:
+                    # Get user info for PDF
+                    resume_data = st.session_state.get('resume', {})
+                    personal_info = resume_data.get('personal_information', {})
+                    user_name = personal_info.get('name', 'Applicant')
+                    
+                    # Ensure job_info is available
+                    job_title = job_info.get('job_title', 'Position') if job_info else 'Position'
+                    company_name = job_info.get('company_name', 'Company') if job_info else 'Company'
+                    
+                    # Generate PDF
+                    pdf_data = create_cover_letter_pdf(
+                        content=cover_content,
+                        applicant_name=user_name,
+                        job_title=job_title,
+                        company_name=company_name
+                    )
+                    
+                    # Generate filename
+                    filename = generate_pdf_filename(
+                        applicant_name=user_name,
+                        job_title=job_title,
+                        company_name=company_name
+                    )
+                    
+                    st.download_button(
+                        label="📄 Download PDF",
+                        data=pdf_data,
+                        file_name=filename,
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="download_cover_letter_pdf"
+                    )
+                else:
+                    st.button("📄 Download PDF", disabled=True, use_container_width=True, help="Generate a cover letter first")
                 
-                pdf_data = create_cover_letter_pdf(
-                    content=cover_content,
-                    applicant_name=user_name,
-                    job_title=job_info.get('job_title', 'Position'),
-                    company_name=job_info.get('company_name', 'Company')
-                )
-                
-                filename = generate_pdf_filename(
-                    applicant_name=user_name,
-                    job_title=job_info.get('job_title', 'Position'),
-                    company_name=job_info.get('company_name', 'Company')
-                )
-                
-                st.download_button(
-                    label="📄 Download PDF",
-                    data=pdf_data,
-                    file_name=filename,
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-                
+            except ImportError as e:
+                st.error("📄 PDF generation unavailable: Missing required libraries. Please install reportlab.")
+                st.code("pip install reportlab")
             except Exception as e:
-                st.error(f"Error generating PDF: {str(e)}")
+                st.error(f"❌ Error generating PDF: {str(e)}")
+                st.info("💡 Try generating the cover letter again or check your resume data.")
             
             if st.button("🗑️ Clear Cover Letter", use_container_width=True):
                 del st.session_state['generated_cover_letter']
