@@ -4,6 +4,8 @@ from datetime import datetime
 import time
 from dateutil import parser
 import math
+import pandas as pd
+import io
 from ai_content_generator import (
     generate_email_content, 
     generate_cover_letter_content,
@@ -56,6 +58,65 @@ def get_resume_status():
             'color': 'red',
             'text': 'No Resume'
         }
+
+def delete_internship_directly(user_id, internship_id):
+    """Delete internship directly without confirmation"""
+    try:
+        db = SupabaseDB()
+        result = db.delete_internship(user_id, internship_id)
+        if result:
+            # Clear session state to force refresh from database
+            st.session_state.all_internships = None
+            st.session_state.delete_success = True
+            # Force fresh data reload
+            if 'user_id' in st.session_state:
+                fresh_db = SupabaseDB()
+                fresh_internships = fresh_db.get_internships_by_user(st.session_state.user_id)
+                if fresh_internships is not None:
+                    st.session_state.all_internships = fresh_internships
+            return True
+        else:
+            st.error("Failed to delete internship. Please try again.")
+            return False
+    except Exception as e:
+        st.error(f"Error deleting internship: {str(e)}")
+        return False
+
+def export_internships_to_csv(internships):
+    """Convert internships list to CSV format for download"""
+    if not internships:
+        return None
+    
+    # Prepare data for CSV export
+    export_data = []
+    for internship in internships:
+        # Extract fields based on actual database schema
+        row = {
+            'ID': internship.get('id', ''),
+            'User ID': internship.get('user_id', ''),
+            'Job Title': internship.get('job_title', ''),
+            'Company Name': internship.get('company_name', ''),
+            'Location': internship.get('location', ''),
+            'Status': internship.get('status', 'new').title(),
+            'Job Description': internship.get('job_description', ''),
+            'Application Link': internship.get('application_link', ''),
+            'Source URL': internship.get('source_url', ''),
+            'Source Site': internship.get('source_site', ''),
+            'Created At': internship.get('created_at', ''),
+            'Notified': internship.get('notified', False)
+        }
+        export_data.append(row)
+    
+    # Create DataFrame and convert to CSV
+    df = pd.DataFrame(export_data)
+    
+    # Create CSV string
+    csv_buffer = io.StringIO()
+    df.to_csv(csv_buffer, index=False, encoding='utf-8')
+    csv_string = csv_buffer.getvalue()
+    csv_buffer.close()
+    
+    return csv_string
 
 def generate_application_content(internship, additional_info, content_type):
     """Generate email or cover letter using AI based on resume and job info"""
@@ -115,12 +176,10 @@ def show_dashboard_page():
         'all_internships': [],
         'button_counter': 0,
         'expanded_card': None,
-        'confirm_delete': None,
-        'confirm_reject': None,
         'delete_success': False,
-        'reject_success': False,
         'last_action': None,
-        'last_action_status': None
+        'last_action_status': None,
+        'show_details': None
     }
     
     for key, default_value in state_defaults.items():
@@ -240,19 +299,43 @@ def show_dashboard_page():
     else:
         st.info(f"📊 Showing {total_items} internships")
     
-    # Refresh button
-    if st.button('🔄 Refresh', key="dashboard_refresh_btn", use_container_width=True):
-        st.session_state.all_internships = None
-        if not st.session_state.user_id:
-            st.error("You must be logged in to view internships.")
-            return
-        db = SupabaseDB()
-        internships = db.get_internships_by_user(st.session_state.user_id)
-        if internships is None:
-            st.error("Failed to load internships. Please try again.")
-            return
-        st.session_state.all_internships = internships
-        st.rerun()
+    # Action buttons row
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        # CSV Export button
+        if filtered_internships:
+            csv_data = export_internships_to_csv(filtered_internships)
+            if csv_data:
+                filename = f"internships_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                st.download_button(
+                    label="📄 Export to CSV",
+                    data=csv_data,
+                    file_name=filename,
+                    mime="text/csv",
+                    key="export_csv_btn",
+                    use_container_width=True,
+                    help=f"Download {len(filtered_internships)} internships as CSV file"
+                )
+            else:
+                st.button("📄 Export to CSV", disabled=True, use_container_width=True, help="No data to export")
+        else:
+            st.button("📄 Export to CSV", disabled=True, use_container_width=True, help="No internships to export")
+    
+    with col2:
+        # Refresh button
+        if st.button('🔄 Refresh', key="dashboard_refresh_btn", use_container_width=True):
+            st.session_state.all_internships = None
+            if not st.session_state.user_id:
+                st.error("You must be logged in to view internships.")
+                return
+            db = SupabaseDB()
+            internships = db.get_internships_by_user(st.session_state.user_id)
+            if internships is None:
+                st.error("Failed to load internships. Please try again.")
+                return
+            st.session_state.all_internships = internships
+            st.rerun()
 
     # Show internship details in a modal-like dialog using an empty element as backdrop
     if st.session_state.show_details:
@@ -344,19 +427,10 @@ def show_dashboard_page():
                         # Show delete button for applied internships
                         reject_key = f"reject_detail_{internship['id']}_{st.session_state.button_counter}"
                         if st.button("🗑️ Delete", key=reject_key, type="secondary", use_container_width=True):
-                            try:
-                                db = SupabaseDB()
-                                result = db.delete_internship(user_id, internship['id'])
-                                if result:
-                                    st.success("✅ Internship successfully deleted!")
-                                    st.session_state.all_internships = None
-                                    st.session_state.show_details = None
-                                    time.sleep(1)
-                                    st.experimental_rerun()
-                                else:
-                                    st.error("Failed to delete internship. Please try again.")
-                            except Exception as e:
-                                st.error(f"Error deleting internship: {str(e)}")
+                            with st.spinner("Deleting internship..."):
+                                if delete_internship_directly(user_id, internship['id']):
+                                    st.session_state.show_details = None  # Close the modal
+                                    st.rerun()
                     
                     else:  # new status
                         # Action buttons for new internships in details view
@@ -388,23 +462,10 @@ def show_dashboard_page():
                         with buttons_col2:
                             reject_key = f"reject_detail_{internship['id']}_{st.session_state.button_counter}"
                             if st.button("🗑️ Delete", key=reject_key, type="secondary", use_container_width=True):
-                                try:
-                                    db = SupabaseDB()
-                                    internship_id = int(internship['id'])
-                                    # Delete the internship from database
-                                    result = db.delete_internship(user_id, internship_id)
-                                    if result:
-                                        # Deletion successful, now update the UI
+                                with st.spinner("Deleting internship..."):
+                                    if delete_internship_directly(user_id, internship['id']):
                                         st.session_state.show_details = None  # Close the modal
-                                        st.session_state.all_internships = None  # Force refresh of internships
-                                        # Show success message and rerun
-                                        st.success("✅ Internship successfully deleted!")
-                                        time.sleep(0.5)  # Brief pause to show the message
                                         st.rerun()
-                                    else:
-                                        st.error("Failed to delete internship. Please try again.")
-                                except Exception as e:
-                                    st.error(f"Error deleting internship: {str(e)}")
                         
                         # Show application link if available
                         if internship.get('application_link'):
@@ -414,81 +475,8 @@ def show_dashboard_page():
                 st.markdown('</div>', unsafe_allow_html=True)
             st.markdown("---")
 
-    # Handle delete confirmation with a popup-like dialog
-    if st.session_state.confirm_delete:
-        internship_to_delete = next((i for i in all_internships if i['id'] == st.session_state.confirm_delete), None)
-        if internship_to_delete:
-            # Create a popup-like effect
-            with st.container():
-                # Add some spacing
-                st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
-                
-                # Create the confirmation dialog
-                with st.container(border=True):
-                    st.markdown("### 🗑️ Confirm Deletion")
-                    st.warning(
-                        f"Are you sure you want to delete this internship?\n\n"
-                        f"**{internship_to_delete['job_title']}** at **{internship_to_delete['company_name']}**"
-                    )
-                    
-                    # Add some spacing
-                    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("Yes, Delete", type="primary", key="confirm_yes", use_container_width=True):
-                            db = SupabaseDB()
-                            # Delete the internship from database
-                            if db.delete_internship(user_id, internship_to_delete['id']):
-                                st.success("✅ Internship successfully deleted!")
-                                st.session_state.all_internships = None
-                                time.sleep(1)  # Give time to see the deletion message
-                                # Then delete the internship
-                                if db.delete_internship(user_id, internship_to_delete['id']):
-                                    # Store success message in session state
-                                    st.session_state.delete_success = True
-                                    st.session_state.all_internships = None
-                                    st.session_state.confirm_delete = None
-                                    st.rerun()
-                    with col2:
-                        if st.button("No, Cancel", type="secondary", key="confirm_no", use_container_width=True):
-                            st.session_state.confirm_delete = None
-                            st.rerun()
-                            
-    # Handle reject confirmation with a popup-like dialog
-    if st.session_state.confirm_reject:
-        internship_to_reject = next((i for i in all_internships if i['id'] == st.session_state.confirm_reject), None)
-        if internship_to_reject:
-            # Create a popup-like effect
-            with st.container():
-                # Add some spacing
-                st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
-                
-                # Create the confirmation dialog
-                with st.container(border=True):
-                    st.markdown("### ❌ Confirm Rejection")
-                    st.warning(
-                        f"Are you sure you want to reject this internship?\n\n"
-                        f"**{internship_to_reject['job_title']}** at **{internship_to_reject['company_name']}**"
-                    )
-                    
-                    # Add some spacing
-                    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("Yes, Reject", type="primary", key="confirm_reject_yes", use_container_width=True):
-                            db = SupabaseDB()
-                            if db.update_internship_status(user_id, internship_to_reject['id'], 'rejected'):
-                                # Store success message in session state
-                                st.session_state.reject_success = True
-                                st.session_state.all_internships = None
-                                st.session_state.confirm_reject = None
-                                st.rerun()
-                    with col2:
-                        if st.button("No, Cancel", type="secondary", key="confirm_reject_no", use_container_width=True):
-                            st.session_state.confirm_reject = None
-                            st.rerun()
+
+
 
     # Show success message if deletion was successful
     if st.session_state.get('delete_success'):
@@ -498,13 +486,7 @@ def show_dashboard_page():
         time.sleep(1)
         st.rerun()
 
-    # Show success message if rejection was successful
-    if st.session_state.get('reject_success'):
-        st.success("✅ Internship successfully rejected!")
-        # Clear the success message after showing it
-        st.session_state.reject_success = False
-        time.sleep(1)
-        st.rerun()
+
 
     if not all_internships:
         st.info("You haven't saved any internships yet. Use the scraper to add some!")
@@ -599,11 +581,11 @@ def show_dashboard_page():
                     st.info("This internship has been rejected.")
                 
                 elif current_status == 'applied':
-                    reject_key = f"reject_{internship['id']}"
-                    if st.button("❌ Reject", key=reject_key, type="secondary", use_container_width=True):
-                        with st.spinner("Updating status..."):
-                            if update_internship_status_async(internship['id'], 'rejected'):
-                                st.success("✅ Status updated to Rejected!")
+                    # Only show delete button for applied internships
+                    delete_key = f"delete_{internship['id']}"
+                    if st.button("🗑️ Delete", key=delete_key, type="secondary", use_container_width=True):
+                        with st.spinner("Deleting internship..."):
+                            if delete_internship_directly(user_id, internship['id']):
                                 st.rerun()
                 
                 elif current_status == 'new':
@@ -617,12 +599,19 @@ def show_dashboard_page():
                                     st.rerun()
                     
                     with cols[1]:
-                        reject_key = f"reject_{internship['id']}"
-                        if st.button("❌ Reject", key=reject_key, type="secondary", use_container_width=True):
-                            with st.spinner("Updating status..."):
-                                if update_internship_status_async(internship['id'], 'rejected'):
-                                    st.success("✅ Status updated to Rejected!")
+                        delete_key = f"delete_{internship['id']}"
+                        if st.button("🗑️ Delete", key=delete_key, type="secondary", use_container_width=True):
+                            with st.spinner("Deleting internship..."):
+                                if delete_internship_directly(user_id, internship['id']):
                                     st.rerun()
+                
+                elif current_status == 'rejected':
+                    # Only show delete button for rejected internships
+                    delete_key = f"delete_{internship['id']}"
+                    if st.button("🗑️ Delete", key=delete_key, type="secondary", use_container_width=True):
+                        with st.spinner("Deleting internship..."):
+                            if delete_internship_directly(user_id, internship['id']):
+                                st.rerun()
                 
                 # AI Generation Section
                 st.markdown("---")
